@@ -1,0 +1,39 @@
+{
+  "8013245091": {
+    "state": "main",
+    "name": "علی",
+    "gender": "پسر 👦",
+    "target": "8013245091",
+    "link": "506661",
+    "pref": "male",
+    "anon_target": "8017175071"
+  },
+  "8017175071": {
+    "state": "main",
+    "name": "علی",
+    "gender": "پسر 👦",
+    "link": "433246",
+    "target": "8013245091",
+    "end_button_sent": false,
+    "pref": "male",
+    "anon_target": "8013245091"
+  },
+  "6660108847": {
+    "state": "anon_wait_text",
+    "name": "دنیا",
+    "gender": "دختر 👧",
+    "age": 20,
+    "pref": "any",
+    "target": "6660108847"
+  },
+  "7277473753": {
+    "state": "choose_pref",
+    "name": "@Miiss_sadaaf"
+  },
+  "8555321817": {
+    "state": "main",
+    "name": "رضا",
+    "gender": "male",
+    "age": 17
+  }
+}
