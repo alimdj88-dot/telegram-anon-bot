@@ -22,7 +22,7 @@ def keep_alive():
 # -----------------------------------
 
 # توکن و تنظیمات اصلی
-TOKEN = "8213706320:AAGuZ8G0GKepNz4F82ILaoQVOQbZrjwvN-I"
+TOKEN = "8213706320:AAEw_nRYUUqecbPx2kGxm_7xkss6sJCT6M0"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
 
