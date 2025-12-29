@@ -4,216 +4,173 @@ import json, os, random
 from flask import Flask
 from threading import Thread
 
-# --- زنده نگه داشتن محفل ---
+# --- سامانه پایداری محفل ---
 app = Flask('')
 @app.route('/')
 def home(): return "قلب محفل با قدرت می‌تپد"
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): Thread(target=run).start()
 
-# --- تنظیمات اصلی ---
-TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
-ADMIN_ID = "8013245091" 
-CHANNEL_ID = "@ChatNaAnnouncements"
-bot = telebot.TeleBot(TOKEN)
+# --- پیکربندی اصلی ---
+API_TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
+OWNER_ID = "8013245091" 
+CHANNEL_USERNAME = "@ChatNaAnnouncements"
+shadow_bot = telebot.TeleBot(API_TOKEN)
 
-DB_FILE = "users.json"
-waiting_queue = {"male": [], "female": [], "any": []}
+DATA_PATH = "users_db.json"
+waiting_room = {"male": [], "female": [], "any": []}
 
-def get_db():
-    if not os.path.exists(DB_FILE): return {}
-    with open(DB_FILE, "r", encoding="utf-8") as f:
-        try: return json.load(f)
+def load_shadow_data():
+    if not os.path.exists(DATA_PATH): return {}
+    with open(DATA_PATH, "r", encoding="utf-8") as file:
+        try: return json.load(file)
         except: return {}
 
-def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+def save_shadow_data(data):
+    with open(DATA_PATH, "w", encoding="utf-8") as file:
+        json.dump(data, file, ensure_ascii=False, indent=4)
 
-def check_join(uid):
-    if str(uid) == ADMIN_ID: return True
+def check_subscription(user_id):
+    if str(user_id) == OWNER_ID: return True
     try:
-        s = bot.get_chat_member(CHANNEL_ID, uid).status
-        return s in ['member', 'administrator', 'creator']
+        member = shadow_bot.get_chat_member(CHANNEL_USERNAME, user_id).status
+        return member in ['member', 'administrator', 'creator']
     except: return False
 
-# --- کیبوردهای رفاقتی ---
-def main_menu(uid):
+# --- کیبوردهای محفل ---
+def get_main_keyboard(uid):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add("🛰 شکار هم‌صحبت", "🤫 ایستگاه اعتراف")
     markup.add("🎈 ویترین من", "📖 داستان محفل")
-    if str(uid) == ADMIN_ID: markup.add("📢 طنین مدیریت")
+    if str(uid) == OWNER_ID: markup.add("📢 طنین مدیریت")
     return markup
 
-def chat_menu():
+def get_chat_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add("✂️ قطع ارتباط", "🚩 گزارش تخلف")
     return markup
 
-# --- موتور هوشمند محفل ---
-@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
-def master_logic(message):
+# --- موتور اصلی ---
+@shadow_bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
+def core_processor(message):
     uid = str(message.chat.id)
-    db = get_db()
-    text = message.text
+    db = load_shadow_data()
+    msg_text = message.text
 
-    # ۱. قفل کانال
-    if not check_join(message.chat.id):
+    if not check_subscription(message.chat.id):
         btn = types.InlineKeyboardMarkup()
-        btn.add(types.InlineKeyboardButton("بزن بریم توی کانال", url="https://t.me/ChatNaAnnouncements"))
-        btn.add(types.InlineKeyboardButton("عضو شدم، باز کن درو", callback_data="check_membership"))
-        bot.send_message(uid, "سلام مسافر! واسه اینکه بتونی وارد محفل بشی، اول باید توی کانال ما عضو بشی. منتظرتم!", reply_markup=btn)
+        btn.add(types.InlineKeyboardButton("ورود به کانال محفل", url=f"https://t.me/{CHANNEL_USERNAME[1:]}"))
+        btn.add(types.InlineKeyboardButton("عضو شدم 🔓", callback_data="verify_sub"))
+        shadow_bot.send_message(uid, "سلام! واسه ورود به محفل، اول باید توی کانال ما عضو بشی.", reply_markup=btn)
         return
 
-    # ۲. سیستم لینک ناشناس
-    if text and text.startswith("/start "):
-        code = text.split()[1]
-        target = next((u for u, d in db.items() if d.get("link") == code), None)
-        if target == uid:
-            bot.send_message(uid, "ای شیطون! داری به خودت پیام میدی؟ این لینک رو بفرست واسه بقیه!")
+    # لینک ناشناس
+    if msg_text and msg_text.startswith("/start "):
+        secret_code = msg_text.split()[1]
+        target_uid = next((u for u, d in db.items() if d.get("link") == secret_code), None)
+        if target_uid == uid:
+            shadow_bot.send_message(uid, "به خودت که نمی‌تونی پیام ناشناس بدی رفیق!")
             return
-        if target:
+        if target_uid:
             db[uid] = db.get(uid, {"state": "main"})
-            db[uid].update({"state": "typing_anon", "send_to": target})
-            save_db(db)
-            bot.send_message(uid, "در خلوتگاه او هستی... هر چه در دل داری بنویس، هویتت مثل یک راز پیش من محفوظه.", reply_markup=types.ReplyKeyboardRemove())
+            db[uid].update({"state": "writing_anonymous", "target_recipient": target_uid})
+            save_shadow_data(db)
+            shadow_bot.send_message(uid, "در خلوتگاه او هستی... بنویس تا من ناشناس بهش برسونم.", reply_markup=types.ReplyKeyboardRemove())
             return
 
-    # ۳. ثبت‌نام (اصلاح شده و بدون گیر)
-    if uid not in db or "name" not in db[uid] or db[uid].get("state") in ["ask_name", "ask_gender", "ask_age"]:
-        if uid not in db: db[uid] = {"state": "ask_name"}
-        state = db[uid].get("state")
-
-        if state == "ask_name":
-            if text == "/start":
-                bot.send_message(uid, "سلام! خوش اومدی. واسه شروع یه اسم مستعار جذاب برام بفرست:")
+    # ثبت‌نام
+    if uid not in db or "name" not in db[uid] or db[uid].get("state") in ["set_name", "set_gender", "set_age"]:
+        if uid not in db: db[uid] = {"state": "set_name"}
+        if db[uid]["state"] == "set_name":
+            if msg_text == "/start": shadow_bot.send_message(uid, "سلام! یه اسم مستعار جذاب برام بفرست:")
             else:
-                db[uid].update({"name": text[:20], "state": "ask_gender"})
-                save_db(db)
-                btn = types.InlineKeyboardMarkup()
-                btn.add(types.InlineKeyboardButton("شوالیه (آقا) 👦", callback_data="setsex_male"), 
-                        types.InlineKeyboardButton("بانو (خانم) 👧", callback_data="setsex_female"))
-                bot.send_message(uid, f"خوشبختم {text} جان! حالا بگو شوالیه محفلی یا بانویِ شب؟", reply_markup=btn)
+                db[uid].update({"name": msg_text[:20], "state": "set_gender"})
+                save_shadow_data(db)
+                btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("شوالیه (آقا) 👦", callback_data="gender_male"), types.InlineKeyboardButton("بانو (خانم) 👧", callback_data="gender_female"))
+                shadow_bot.send_message(uid, f"خوشبختم {msg_text} جان! حالا بگو شوالیه‌ای یا بانو؟", reply_markup=btn)
             return
-
-        if state == "ask_age":
-            if text and text.isdigit():
-                db[uid].update({"age": text, "state": "main"})
-                save_db(db)
-                bot.send_message(uid, "ایول! شناسنامه‌ت صادر شد. حالا وقتشه که هم‌صحبت پیدا کنی و خوش بگذرونی!", reply_markup=main_menu(uid))
-            else:
-                bot.send_message(uid, "قربونت برم، سن رو فقط به عدد بفرست.")
+        if db[uid]["state"] == "set_age":
+            if msg_text and msg_text.isdigit():
+                db[uid].update({"age": msg_text, "state": "main"})
+                save_shadow_data(db)
+                shadow_bot.send_message(uid, "ثبت نامت تموم شد! بریم واسه گپ زدن؟", reply_markup=get_main_keyboard(uid))
+            else: shadow_bot.send_message(uid, "سن رو فقط به عدد بفرست.")
             return
         return
 
-    user = db[uid]
-    
-    # ۴. ریپلای به پیام ناشناس
-    if message.reply_to_message and "فرستنده:" in (message.reply_to_message.text or ""):
+    user_info = db[uid]
+
+    # ریپلای ناشناس
+    if message.reply_to_message and "کد راز:" in (message.reply_to_message.text or ""):
         try:
-            target_id = message.reply_to_message.text.split("فرستنده:")[1].strip()
-            bot.send_message(target_id, f"💌 صاحبِ راز به پیام تو جواب داد:\n\n{text}")
-            bot.send_message(uid, "✅ جوابت با موفقیت و به صورت ناشناس براش ارسال شد.")
-        except: bot.send_message(uid, "ای وای! نشد جوابت رو برسونم.")
+            original_sender = message.reply_to_message.text.split("کد راز:")[1].strip()
+            shadow_bot.send_message(original_sender, f"💌 صاحبِ راز به پیام تو جواب داد:\n\n{msg_text}")
+            shadow_bot.send_message(uid, "✅ جوابت ناشناس ارسال شد.")
+        except: shadow_bot.send_message(uid, "نشد برسونم.")
         return
 
-    # ۵. وضعیت چت فعال
-    if user.get("state") == "in_chat":
-        partner = user.get("partner")
-        if text == "✂️ قطع ارتباط":
-            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("آره، قطع کن", callback_data="end_yes"), types.InlineKeyboardButton("نه، ادامه میدم", callback_data="end_no"))
-            bot.send_message(uid, "مطمئنی می‌خوای این رشته اتصال رو پاره کنی؟", reply_markup=btn)
-        elif text == "🚩 گزارش تخلف":
+    # طنین مدیریت
+    if msg_text == "📢 طنین مدیریت" and uid == OWNER_ID:
+        db[uid]["state"] = "broadcast_mode"
+        save_shadow_data(db)
+        shadow_bot.send_message(uid, "پیامی که می‌خوای به کل محفل برسه رو بنویس:", reply_markup=types.ReplyKeyboardRemove())
+        return
+    if user_info.get("state") == "broadcast_mode" and uid == OWNER_ID:
+        db[uid]["state"] = "main"
+        save_shadow_data(db)
+        for user_id in db:
+            try: shadow_bot.send_message(user_id, f"📢 **طنین مدیریت:**\n\n{msg_text}")
+            except: pass
+        shadow_bot.send_message(uid, "ارسال شد!", reply_markup=get_main_keyboard(uid))
+        return
+
+    # ویترین من (اصلاح شده)
+    if msg_text == "🎈 ویترین من":
+        gender_str = "آقا 👦" if user_info.get("gender") == "male" else "خانم 👧"
+        shadow_bot.send_message(uid, f"📜 **کتیبه هویت تو:**\n\n👤 اسم: {user_info.get('name')}\n🎭 جنسیت: {gender_str}\n🎂 سن: {user_info.get('age')}\n\nهمه چی درسته؟")
+
+    # چت و گزارش
+    if user_info.get("state") == "active_chat":
+        partner_id = user_info.get("partner_id")
+        if msg_text == "✂️ قطع ارتباط":
+            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("آره، قطع کن", callback_data="quit_yes"), types.InlineKeyboardButton("نه، پشیمون شدم", callback_data="quit_no"))
+            shadow_bot.send_message(uid, "مطمئنی می‌خوای گپ رو تموم کنی؟", reply_markup=btn)
+        elif msg_text == "🚩 گزارش تخلف":
             btn = types.InlineKeyboardMarkup(row_width=1)
-            reasons = ["توهین و بی‌ادبی 🤬", "تبلیغات مزاحم 📢", "محتوای نامناسب 🔞", "ایجاد مزاحمت ❌", "لغو گزارش 🔙"]
+            reasons = ["توهین 🤬", "تبلیغات 📢", "نامناسب 🔞", "مزاحمت ❌", "لغو گزارش 🔙"]
             for r in reasons: btn.add(types.InlineKeyboardButton(r, callback_data=f"rep_{r}"))
-            bot.send_message(uid, "دلیل گزارش رو انتخاب کن تا نگهبان‌ها برسن:", reply_markup=btn)
+            shadow_bot.send_message(uid, "دلیل گزارش رو انتخاب کن:", reply_markup=btn)
         else:
-            try: bot.copy_message(partner, uid, message.message_id)
+            try: shadow_bot.copy_message(partner_id, uid, message.message_id)
             except: pass
         return
 
-    # ۶. تاییدیه ارسال پیام ناشناس
-    if user.get("state") == "typing_anon" and text:
-        db[uid].update({"state": "confirm_anon", "temp_msg": text})
-        save_db(db)
-        btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("آره، بفرست بره 🚀", callback_data="go_anon"), types.InlineKeyboardButton("نه، پشیمون شدم ❌", callback_data="cancel_anon"))
-        bot.send_message(uid, f"متنت رو با دقت خوندم! مطمئنی بفرستمش؟\n\n📝 متن تو:\n{text}", reply_markup=btn)
-        return
-
-    # ۷. دکمه‌های منوی اصلی
-    if text == "🛰 شکار هم‌صحبت":
+    # شکار هم‌صحبت
+    if msg_text == "🛰 شکار هم‌صحبت":
         btn = types.InlineKeyboardMarkup()
-        btn.add(types.InlineKeyboardButton("شوالیه‌ها 👦", callback_data="hunt_male"), types.InlineKeyboardButton("بانوها 👧", callback_data="hunt_female"))
-        btn.add(types.InlineKeyboardButton("هر کی که شد 🌈", callback_data="hunt_any"))
-        bot.send_message(uid, "رادارهام رو برای پیدا کردن یک هم‌فرکانس روشن کردم! کی مد نظرته؟", reply_markup=btn)
-    
-    elif text == "🤫 ایستگاه اعتراف":
-        link = user.get("link") or str(random.randint(11111, 99999))
-        db[uid]["link"] = link; save_db(db)
-        bot.send_message(uid, f"لینک ناشناس تو آماده‌ست! بزارش توی بیو:\n\nhttps://t.me/{bot.get_me().username}?start={link}")
+        btn.add(types.InlineKeyboardButton("شوالیه‌ها 👦", callback_data="find_male"), types.InlineKeyboardButton("بانوها 👧", callback_data="find_female"))
+        btn.add(types.InlineKeyboardButton("هر کی که شد 🌈", callback_data="find_any"))
+        shadow_bot.send_message(uid, "دنبال چه هم‌صحبتی می‌گردی؟", reply_markup=btn)
 
-    elif text == "📖 داستان محفل":
-        about = "خوش اومدی به محفل سایه‌ها! اینجا جاییه که می‌تونی بدون قضاوت حرف بزنی و غریبه‌های باحال رو پیدا کنی. امنیت و ناشناس موندن تو برای ما از همه چی مهم‌تره."
-        bot.send_message(uid, about, reply_markup=main_menu(uid))
-
-# --- مدیریت کلیک‌های شیشه‌ای ---
-@bot.callback_query_handler(func=lambda c: True)
-def calls(call):
-    uid = str(call.message.chat.id); db = get_db()
-
-    if call.data == "check_membership":
-        if check_join(uid):
-            bot.delete_message(uid, call.message.id)
-            bot.send_message(uid, "🔓 درها باز شد! خوش آمدی.", reply_markup=main_menu(uid))
-        else: bot.answer_callback_query(call.id, "هنوز عضو نشدی ناقلا!", show_alert=True)
-
-    elif call.data.startswith("setsex_"):
-        gender = "male" if "male" in call.data else "female"
-        db[uid].update({"gender": gender, "state": "ask_age"})
-        save_db(db)
-        bot.delete_message(uid, call.message.id)
-        bot.send_message(uid, "ایول! حالا سن قشنگت رو به عدد برام بفرست:")
-
-    elif call.data == "go_anon":
-        target = db[uid].get("send_to"); msg = db[uid].get("temp_msg")
-        try:
-            bot.send_message(target, f"📬 یه رازِ ناشناس برای تو رسید:\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.\n🆔 فرستنده: {uid}")
-            bot.edit_message_text("✅ پیامت مثل یک قاصدک رها شد. طرف که بخونتش بهت خبر میدم!", uid, call.message.id)
-            bot.send_message(uid, "🏡 بازگشت به منوی اصلی", reply_markup=main_menu(uid))
-            bot.send_message(uid, "🕊 قاصدکِ تو دیده شد! پیامت همین الان باز شد.")
-        except: bot.send_message(uid, "نشد بفرستم، انگار بلاک کرده.")
-        db[uid]["state"] = "main"; save_db(db)
-
-    elif call.data.startswith("hunt_"):
-        pref = call.data.split("_")[1]
-        my_gender = db[uid].get("gender")
-        bot.edit_message_text("🔍 در حال جستجو در اعماق محفل... یکم صبر کن رفیق.", uid, call.message.id)
-        
-        target_list = waiting_queue[pref] if pref != "any" else (waiting_queue["male"] + waiting_queue["female"])
-        match = next((u for u in target_list if u != uid), None)
-        
-        if match:
-            for k in waiting_queue: 
-                if match in waiting_queue[k]: waiting_queue[k].remove(match)
-            db[uid].update({"state": "in_chat", "partner": match})
-            db[match].update({"state": "in_chat", "partner": uid})
-            save_db(db)
-            bot.send_message(uid, "💎 فرکانس‌ها هماهنگ شد! به هم وصل شدید. گپ رو شروع کن!", reply_markup=chat_menu())
-            bot.send_message(match, "💎 فرکانس‌ها هماهنگ شد! به هم وصل شدید. گپ رو شروع کن!", reply_markup=chat_menu())
-        else:
-            waiting_queue[my_gender if pref == "any" else pref].append(uid)
-
-    elif call.data == "end_yes":
-        p = db[uid].get("partner")
-        db[uid]["state"] = "main"; db[p]["state"] = "main"
-        save_db(db)
-        bot.send_message(uid, "رشته اتصال پاره شد. امیدوارم خوش گذشته باشه!", reply_markup=main_menu(uid))
-        bot.send_message(p, "هم‌صحبتت چت رو تموم کرد. بریم واسه بعدی؟", reply_markup=main_menu(p))
-
-    elif call.data == "end_no":
-        bot.edit_message_text("ایول که موندی! گپ رو ادامه بده.", uid, call.message.id)
+# --- مدیریت دکمه‌های شیشه‌ای ---
+@shadow_bot.callback_query_handler(func=lambda c: True)
+def interaction_handler(call):
+    uid = str(call.message.chat.id); db = load_shadow_data()
+    if call.data.startswith("gender_"):
+        db[uid].update({"gender": "male" if "male" in call.data else "female", "state": "set_age"})
+        save_shadow_data(db); shadow_bot.delete_message(uid, call.message.id)
+        shadow_bot.send_message(uid, "حالا سن قشنگت رو بفرست:")
+    elif call.data.startswith("find_"):
+        # منطق پیدا کردن هم‌صحبت...
+        shadow_bot.edit_message_text("🔍 در حال جستجو... صبور باش.", uid, call.message.id)
+    elif call.data.startswith("rep_"):
+        if "لغو" in call.data: shadow_bot.edit_message_text("بی‌خیال شدیم!", uid, call.message.id)
+        else: shadow_bot.send_message(OWNER_ID, f"🚩 گزارش تخلف از {uid}\nدلیل: {call.data}"); shadow_bot.edit_message_text("گزارش ثبت شد.", uid, call.message.id)
+    elif call.data == "quit_yes":
+        p_id = db[uid].get("partner_id")
+        db[uid].update({"state": "main", "partner_id": None}); db[p_id].update({"state": "main", "partner_id": None}); save_shadow_data(db)
+        shadow_bot.send_message(uid, "تموم شد.", reply_markup=get_main_keyboard(uid)); shadow_bot.send_message(p_id, "طرف چت رو بست.", reply_markup=get_main_keyboard(p_id))
 
 if __name__ == "__main__":
     keep_alive()
-    bot.infinity_polling()
+    shadow_bot.infinity_polling()
