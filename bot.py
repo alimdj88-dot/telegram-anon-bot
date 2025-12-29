@@ -4,6 +4,7 @@ import json, os, random
 from datetime import datetime
 from flask import Flask
 from threading import Thread
+import time
 
 # --- تنظیمات سرور برای آنلاین ماندن در رندر ---
 app = Flask('')
@@ -20,7 +21,7 @@ def keep_alive():
     t.start()
 # -----------------------------------
 
-# توکن جدید شما - مستقیم در کد
+# توکن جدید شما
 TOKEN = "8213706320:AAGuZ8G0GKepNz4F82ILaoQVOQbZrjwvN-I"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
@@ -72,11 +73,6 @@ def end_chat_kb():
     kb.add("❌ پایان چت")
     return kb
 
-def cancel_search_kb():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("⛔ لغو جستجو")
-    return kb
-
 def main_menu(cid):
     users[cid]["state"] = "main"
     bot.send_message(cid, f"✨ سلام {users[cid]['name']} خوش اومدی 😎", reply_markup=main_kb())
@@ -86,12 +82,10 @@ def main_menu(cid):
 @bot.message_handler(commands=["start"])
 def start(message):
     cid = str(message.chat.id)
-    # پیام تست برای اطمینان از اتصال
-    bot.send_message(cid, "✅ پیام شما دریافت شد. در حال پردازش...")
+    # پیام تست مستقیم برای اطمینان از سلامت اتصال
+    bot.send_message(cid, "✅ ربات با موفقیت فعال شد و پیام شما را دریافت کرد!")
     
     args = message.text.split()
-
-    # مدیریت لینک ناشناس
     if len(args) > 1:
         code = args[1]
         if code in links:
@@ -102,7 +96,7 @@ def start(message):
             users.setdefault(cid, {"name": message.from_user.first_name})
             users[cid]["state"] = "anon_write"
             users[cid]["anon_target"] = owner
-            bot.send_message(cid, "✏️ پیامت رو بنویس تا به صورت ناشناس برای طرف مقابل ارسال بشه:")
+            bot.send_message(cid, "✏️ پیامت رو بنویس تا به صورت ناشناس ارسال بشه:")
             save_users()
             return
 
@@ -164,12 +158,6 @@ def handle(message):
             )
             bot.send_message(cid, "🎯 دوست داری به کی وصل بشی؟", reply_markup=kb)
             return
-
-    if state == "searching" and text == "⛔ لغو جستجو":
-        for k in waiting:
-            if cid in waiting[k]: waiting[k].remove(cid)
-        main_menu(cid)
-        return
 
     if state == "chat":
         partner = user.get("partner")
@@ -239,20 +227,23 @@ def callback(call):
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("💬 پاسخ", callback_data=f"rep_{cid}"))
         bot.send_message(target, f"📩 پیام ناشناس جدید:\n\n{msg}", reply_markup=kb)
-        bot.send_message(cid, "✅ پیام شما با موفقیت ارسال شد.")
+        bot.send_message(cid, "✅ پیام شما ارسال شد.")
         main_menu(cid)
 
     if call.data.startswith("rep_"):
         sender_id = call.data.replace("rep_", "")
-        try: bot.send_message(sender_id, "👁️ پیام تو خوانده شد و طرف مقابل در حال پاسخ دادنه...")
+        try: bot.send_message(sender_id, "👁️ پیام تو خوانده شد...")
         except: pass
         user["state"] = "anon_write"
         user["anon_target"] = sender_id
-        bot.send_message(cid, "✏️ حالا پاسخ خودت رو بنویس:")
+        bot.send_message(cid, "✏️ پاسخ رو بنویس:")
 
 # ---------- اجرا ----------
 if __name__ == "__main__":
     load_data()
     keep_alive()
-    print("Bot is starting with NEW CODE and TEST MESSAGE...")
-    bot.infinity_polling(timeout=20, long_polling_timeout=10, restart_on_change=True)
+    print("Bot is connecting to Telegram...")
+    # رفع تداخل وب‌هوک به صورت کدنویسی شده
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
