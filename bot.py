@@ -5,7 +5,7 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-# --- تنظیمات سرور برای آنلاین ماندن ---
+# --- تنظیمات سرور برای آنلاین ماندن در رندر ---
 app = Flask('')
 
 @app.route('/')
@@ -20,7 +20,7 @@ def keep_alive():
     t.start()
 # -----------------------------------
 
-# توکن را اینجا قرار بده یا از Environment Variables استفاده کن
+# توکن جدید شما (مستقیم در کد قرار داده شد)
 TOKEN = "8213706320:AAGuZ8G0GKepNz4F82ILaoQVOQbZrjwvN-I"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
@@ -88,6 +88,7 @@ def start(message):
     cid = str(message.chat.id)
     args = message.text.split()
 
+    # مدیریت لینک ناشناس
     if len(args) > 1:
         code = args[1]
         if code in links:
@@ -98,7 +99,7 @@ def start(message):
             users.setdefault(cid, {"name": message.from_user.first_name})
             users[cid]["state"] = "anon_write"
             users[cid]["anon_target"] = owner
-            bot.send_message(cid, "✏️ پیامت رو بنویس تا به صورت ناشناس ارسال بشه:")
+            bot.send_message(cid, "✏️ پیامت رو بنویس تا به صورت ناشناس برای طرف مقابل ارسال بشه:")
             save_users()
             return
 
@@ -179,13 +180,10 @@ def handle(message):
             return
         
         if partner:
-            # ارسال پیام
             bot.send_message(partner, text)
             # ذخیره پیام در فایل chats.json
             chats.append({
-                "from": cid,
-                "to": partner,
-                "text": text,
+                "from": cid, "to": partner, "text": text,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M")
             })
             save_chats()
@@ -223,8 +221,8 @@ def callback(call):
                     user["partner"], partner["partner"] = pid, cid
                     user["state"] = partner["state"] = "chat"
                     waiting[g].remove(pid)
-                    bot.send_message(cid, "🎉 وصل شدی!", reply_markup=end_chat_kb())
-                    bot.send_message(pid, "🎉 وصل شدی!", reply_markup=end_chat_kb())
+                    bot.send_message(cid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
+                    bot.send_message(pid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
                     save_users()
                     found = True
                     break
@@ -239,19 +237,20 @@ def callback(call):
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("💬 پاسخ", callback_data=f"rep_{cid}"))
         bot.send_message(target, f"📩 پیام ناشناس جدید:\n\n{msg}", reply_markup=kb)
-        bot.send_message(cid, "✅ ارسال شد.")
+        bot.send_message(cid, "✅ پیام شما با موفقیت ارسال شد.")
         main_menu(cid)
 
     if call.data.startswith("rep_"):
         sender_id = call.data.replace("rep_", "")
-        try: bot.send_message(sender_id, "👁️ پیام تو خوانده شد...")
+        try: bot.send_message(sender_id, "👁️ پیام تو خوانده شد و طرف مقابل در حال پاسخ دادنه...")
         except: pass
         user["state"] = "anon_write"
         user["anon_target"] = sender_id
-        bot.send_message(cid, "✏️ پاسخ رو بنویس:")
+        bot.send_message(cid, "✏️ حالا پاسخ خودت رو بنویس:")
 
 # ---------- اجرا ----------
 if __name__ == "__main__":
     load_data()
     keep_alive()
+    print("Bot is starting with NEW TOKEN...")
     bot.infinity_polling(timeout=20, long_polling_timeout=10, restart_on_change=True)
