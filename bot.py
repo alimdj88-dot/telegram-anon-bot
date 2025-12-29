@@ -57,7 +57,7 @@ def handle_messages(message):
     db = get_db()
     text = message.text
 
-    # قفل کانال
+    # ۱. قفل کانال
     if not check_join(message.chat.id):
         btn = types.InlineKeyboardMarkup()
         btn.add(types.InlineKeyboardButton("بزن بریم توی کانال", url="https://t.me/ChatNaAnnouncements"))
@@ -65,7 +65,7 @@ def handle_messages(message):
         bot.send_message(uid, "سلام رفیق! خوش اومدی به جمع ما. واسه اینکه بتونیم گپ بزنیم، اول یه سر به کانالمون بزن و عضو شو، بعد بیا اینجا دکمه رو بزن تا قفل ربات برات باز بشه.", reply_markup=btn)
         return
 
-    # سیستم لینک ناشناس
+    # ۲. سیستم لینک ناشناس (اولویت بالا)
     if text and text.startswith("/start "):
         code = text.split()[1]
         target = next((u for u, d in db.items() if d.get("link") == code), None)
@@ -79,11 +79,11 @@ def handle_messages(message):
             bot.send_message(uid, "الان در خلوتگاه طرف مقابل هستی. هر چی دوست داری بنویس و بفرست، خیالت تخت که هیچوقت نمیفهمه کی بودی!", reply_markup=types.ReplyKeyboardRemove())
             return
 
-    # ثبت نام صمیمی
-    if uid not in db or "name" not in db[uid]:
+    # ۳. ثبت‌نام گام‌به‌گام (اصلاح شده)
+    if uid not in db or "name" not in db[uid] or db[uid].get("state") in ["ask_name", "ask_gender", "ask_age"]:
         if uid not in db: db[uid] = {"state": "ask_name"}
         state = db[uid].get("state")
-        
+
         if state == "ask_name":
             if text == "/start":
                 bot.send_message(uid, "سلام سلام! خیلی خوشحالم که اینجایی. واسه شروع، یه اسم باحال واسه خودت انتخاب کن و برام بفرست:")
@@ -93,6 +93,15 @@ def handle_messages(message):
                 btn = types.InlineKeyboardMarkup()
                 btn.add(types.InlineKeyboardButton("آقا هستم 👦", callback_data="sex_male"), types.InlineKeyboardButton("خانم هستم 👧", callback_data="sex_female"))
                 bot.send_message(uid, f"به‌به، چه اسم قشنگی! خوشبختم {text} جان. حالا بگو شوالیه محفلی یا بانوی محفل؟", reply_markup=btn)
+            return
+
+        if state == "ask_age":
+            if text and text.isdigit():
+                db[uid].update({"age": text, "state": "main"})
+                save_db(db)
+                bot.send_message(uid, "ایول! ثبت نامت تموم شد رفیق. حالا وقتشه که بترکونی و هم‌صحبت پیدا کنی!", reply_markup=main_menu(uid))
+            else:
+                bot.send_message(uid, "قربونت برم، سن رو باید فقط به عدد بفرستی (مثلاً 20). دوباره تلاش کن:")
             return
         return
 
@@ -117,11 +126,11 @@ def handle_messages(message):
 
     # دریافت گزارش
     if state == "waiting_report":
-        if "لغو" in text:
+        if text and "لغو" in text:
             db[uid]["state"] = "in_chat"
             save_db(db); bot.send_message(uid, "حله، برگشتیم به چت. حواست به خودت باشه!", reply_markup=chat_menu())
         else:
-            bot.send_message(ADMIN_ID, f"گزارش جدید از طرف {uid} علیه {user.get('partner')}\nدلیل: {text}")
+            bot.send_message(ADMIN_ID, f"🚩 گزارش جدید!\nشاکی: {uid}\nمتهم: {user.get('partner')}\nدلیل: {text}")
             db[uid]["state"] = "in_chat"; save_db(db)
             bot.send_message(uid, "گزارشت رسید به دستم. نگهبانای محفل حواسشون هست. میتونی به چت ادامه بدی.", reply_markup=chat_menu())
         return
@@ -148,18 +157,21 @@ def handle_messages(message):
 
     elif text == "🎈 ویترین من":
         sex = "آقا" if user.get("gender") == "male" else "خانم"
-        bot.send_message(uid, f"مشخصات تو توی دفتر محفل اینجوری ثبت شده:\n\nاسم: {user['name']}\nجنسیت: {sex}\nسن: {user['age']} سال\n\nهمه چی ردیفه؟")
+        bot.send_message(uid, f"مشخصات تو توی دفتر محفل اینجوری ثبت شده:\n\nاسم: {user['name']}\nجنسیت: {sex}\nسن: {user.get('age', 'نامعلوم')} سال\n\nهمه چی ردیفه؟")
 
     elif text == "📢 طنین مدیریت" and uid == ADMIN_ID:
         db[uid]["state"] = "admin_bc"; save_db(db)
         bot.send_message(uid, "پیامی که میخوای به گوش همه برسه رو بنویس:")
 
     elif state == "admin_bc" and uid == ADMIN_ID:
+        count = 0
         for user_id in db:
-            try: bot.send_message(user_id, "📢 پیام ویژه از مدیریت محفل:\n\n" + text)
+            try:
+                bot.send_message(user_id, "📢 پیام ویژه از مدیریت محفل:\n\n" + text)
+                count += 1
             except: pass
         db[uid]["state"] = "main"; save_db(db)
-        bot.send_message(uid, "پیام با موفقیت طنین‌انداز شد!")
+        bot.send_message(uid, f"طنین با موفقیت برای {count} نفر فرستاده شد!")
 
 # --- مدیریت کلیک‌های شیشه‌ای ---
 @bot.callback_query_handler(func=lambda c: True)
@@ -178,19 +190,16 @@ def calls(call):
         save_db(db); bot.delete_message(uid, call.message.id)
         bot.send_message(uid, "ایول! حالا سن قشنگت رو به عدد برام بفرست:")
 
-    elif call.data.startswith("hunt_"):
-        pref = call.data.split("_")[1]
-        bot.edit_message_text("در حال جستجو توی اعماق محفل... یکم صبور باش رفیق.", uid, call.message.id)
-        # سیستم جفت‌سازی ساده (بهبود یافته)
-        db[uid]["state"] = "searching"; save_db(db)
-
     elif call.data == "go_anon":
         target = db[uid].get("send_to"); msg = db[uid].get("temp_msg")
-        bot.send_message(target, f"📬 یه پیام ناشناس جدید برات اومد:\n\n{msg}")
-        bot.send_message(uid, "خیالت راحت! قاصدک پیامت رو برد و طرف مقابل هم الان پیامت رو دید.")
+        try:
+            bot.send_message(target, f"📬 یه پیام ناشناس جدید برات اومد:\n\n{msg}")
+            bot.send_message(uid, "🕊 پیامت مثل یک قاصدک رها شد و به دستش رسید. خیالت راحت!")
+        except:
+            bot.send_message(uid, "متاسفانه نشد پیامت رو برسونم، انگار طرف ربات رو بلاک کرده.")
         db[uid]["state"] = "main"; save_db(db)
         bot.edit_message_text("پیامت با موفقیت ارسال شد.", uid, call.message.id)
-        bot.send_message(uid, "برگشتیم به منوی اصلی", reply_markup=main_menu(uid))
+        bot.send_message(uid, "برگشتیم به منوی اصلی رفیق", reply_markup=main_menu(uid))
 
     elif call.data == "end_yes":
         p = db[uid].get("partner")
@@ -201,15 +210,6 @@ def calls(call):
 
     elif call.data == "end_no":
         bot.edit_message_text("ایول که موندی! به گپ زدن ادامه بده.", uid, call.message.id)
-
-@bot.message_handler(func=lambda m: get_db().get(str(m.chat.id), {}).get("state") == "ask_age")
-def get_age(message):
-    uid = str(message.chat.id); db = get_db()
-    if message.text.isdigit():
-        db[uid].update({"age": message.text, "state": "main"})
-        save_db(db)
-        bot.send_message(uid, "ثبت نامت تموم شد رفیق! حالا وقتشه که بترکونی.", reply_markup=main_menu(uid))
-    else: bot.send_message(uid, "سن رو فقط به عدد بفرست قربونت برم!")
 
 if __name__ == "__main__":
     keep_alive()
