@@ -20,7 +20,7 @@ def keep_alive():
     t.start()
 # -----------------------------------
 
-# توکن جدید شما (مستقیم در کد قرار داده شد)
+# توکن جدید شما - مستقیم در کد
 TOKEN = "8213706320:AAGuZ8G0GKepNz4F82ILaoQVOQbZrjwvN-I"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
@@ -86,6 +86,9 @@ def main_menu(cid):
 @bot.message_handler(commands=["start"])
 def start(message):
     cid = str(message.chat.id)
+    # پیام تست برای اطمینان از اتصال
+    bot.send_message(cid, "✅ پیام شما دریافت شد. در حال پردازش...")
+    
     args = message.text.split()
 
     # مدیریت لینک ناشناس
@@ -181,7 +184,6 @@ def handle(message):
         
         if partner:
             bot.send_message(partner, text)
-            # ذخیره پیام در فایل chats.json
             chats.append({
                 "from": cid, "to": partner, "text": text,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -252,5 +254,5 @@ def callback(call):
 if __name__ == "__main__":
     load_data()
     keep_alive()
-    print("Bot is starting with NEW TOKEN...")
+    print("Bot is starting with NEW CODE and TEST MESSAGE...")
     bot.infinity_polling(timeout=20, long_polling_timeout=10, restart_on_change=True)
