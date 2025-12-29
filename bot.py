@@ -4,43 +4,48 @@ import json, os, random
 from flask import Flask
 from threading import Thread
 
-# --- پایداری سرور ---
+# --- سامانه پایداری ---
 app = Flask('')
 @app.route('/')
-def home(): return "🤖 Database Integrated & Online!"
+def home(): return "💎 High-End UI Bot is Online!"
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): Thread(target=run).start()
 
-# --- تنظیمات اصلی ---
+# --- تنظیمات اختصاصی شما ---
 TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
-ADMIN_ID = "8013245091"  # آیدی عددی خودت
-CHANNEL_ID = "@ChatNaAnnouncements" 
-CHANNEL_NAME = "اطلاع رسانی|چت ناشناس"
+ADMIN_ID = "8013245091" 
+CHANNEL_ID = "@ChatNaAnnouncements"
 bot = telebot.TeleBot(TOKEN)
 
-# فایل‌های دیتابیس شما
 USERS_FILE = "users.json"
-CHATS_FILE = "chats.json"
+# لیست انتظار برای شکار هم‌صحبت (در حافظه موقت برای سرعت بالا)
+waiting_room = {"male": [], "female": [], "any": []}
 
-# بارگذاری داده‌ها از فایل
-def load_db(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
+def load_db():
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
             try: return json.load(f)
             except: return {}
     return {}
 
-# ذخیره داده‌ها در فایل
-def save_db(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
+def save_db(data):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# --- کیبوردهای جذاب (بدون تغییر متن) ---
+def is_member(user_id):
+    if str(user_id) == ADMIN_ID: return True
+    try:
+        status = bot.get_chat_member(CHANNEL_ID, user_id).status
+        return status in ['member', 'administrator', 'creator']
+    except: return False
+
+# --- طراحی ویژوال کیبوردها ---
 def main_kb(cid):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     kb.add("🔥 شکارِ هم‌صحبت", "🎭 ایستگاهِ ناشناس")
     kb.add("💎 ویترینِ من", "📜 راهنمایِ سفر")
-    if str(cid) == str(ADMIN_ID): kb.add("📢 طنینِ همگانی")
+    if str(cid) == ADMIN_ID:
+        kb.add("📢 طنینِ همگانی")
     return kb
 
 def chat_kb():
@@ -48,133 +53,147 @@ def chat_kb():
     kb.add("✂️ پایانِ قصه", "🚩 گزارشِ مزاحمت")
     return kb
 
-def is_member(user_id):
-    if str(user_id) == str(ADMIN_ID): return True
-    try:
-        status = bot.get_chat_member(CHANNEL_ID, user_id).status
-        return status in ['member', 'administrator', 'creator']
-    except: return False
-
-# --- مدیریت پیام‌ها ---
-@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation'])
+# --- مدیریت پیام‌ها و منطق UI ---
+@bot.message_handler(func=lambda m: True, content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
 def main_controller(message):
     cid = str(message.chat.id)
-    users = load_db(USERS_FILE)
-    chats = load_db(CHATS_FILE)
+    users = load_db()
+    text = message.text
 
-    # ۱. چک کردن عضویت
+    # ۱. قفل فوق امنیتی جوین اجباری
     if not is_member(message.chat.id):
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton(f"📢 {CHANNEL_NAME}", url=f"https://t.me/{CHANNEL_ID[1:]}"))
-        kb.add(types.InlineKeyboardButton("🚀 عضو شدم! بازش کن", callback_data="verify"))
-        bot.send_message(cid, "⛔️ **دسترسی محدود شده است!**\nبرای عبور، ابتدا در کانال ما عضو شو و دکمه تایید رو بزن. ✨", reply_markup=kb)
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("📢 اطلاع رسانی|چت ناشناس", url=f"https://t.me/ChatNaAnnouncements"))
+        kb.add(types.InlineKeyboardButton("✅ عضویتم را تایید کن", callback_data="verify_member"))
+        bot.send_message(cid, "👋 **سلام مسافر گرامی!**\n\nبرای دسترسی به امکانات پیشرفته و دنیای ناشناس، ابتدا باید در کانال رسمی ما عضو شوید.\n\n✨ **سپس دکمه تایید را لمس کنید:**", reply_markup=kb, parse_mode="Markdown")
         return
 
-    # ۲. تشخیص لینک ناشناس (Deep Linking)
-    if message.text and message.text.startswith("/start "):
-        code = message.text.split()[1]
+    # ۲. هندل لینک ناشناس (Deep Link)
+    if text and text.startswith("/start "):
+        code = text.split()[1]
         target_id = next((u for u, d in users.items() if d.get("link") == code), None)
         if target_id and target_id != cid:
             users[cid] = users.get(cid, {"state": "main"})
-            users[cid]["state"] = "anon_writing"
-            users[cid]["target"] = target_id
-            save_db(USERS_FILE, users)
-            bot.send_message(cid, "🤫 **هیسسس!** هر چی تو دلت هست بنویس تا مخفیانه براش بفرستم:", reply_markup=types.ReplyKeyboardRemove())
+            users[cid].update({"state": "writing_anon", "target": target_id})
+            save_db(users)
+            bot.send_message(cid, "🤫 **وارد ایستگاه اعتراف شدی!**\n\nپیام تو کاملاً ناشناس ارسال میشه. هر چی دوست داری بنویس و بفرست:", reply_markup=types.ReplyKeyboardRemove())
             return
 
-    # ۳. فرآیند ثبت‌نام (ذخیره در users.json)
+    # ۳. ورود و ثبت نام با UI جدید
     if cid not in users or "name" not in users[cid]:
-        if cid not in users: users[cid] = {"state": "get_name"}
-        
-        if users[cid]["state"] == "get_name" and message.text:
-            users[cid].update({"name": message.text[:15], "state": "get_gender"})
-            save_db(USERS_FILE, users)
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True).add("شوالیه (آقا) 👦", "بانو (خانم) 👧")
-            bot.send_message(cid, "✅ حالا اصالتت رو انتخاب کن:", reply_markup=kb)
-        elif users[cid]["state"] == "get_gender" and message.text:
-            users[cid].update({"gender": "male" if "شوالیه" in message.text else "female", "state": "get_age"})
-            save_db(USERS_FILE, users)
-            bot.send_message(cid, "🎂 چند سالته؟ (فقط عدد)", reply_markup=types.ReplyKeyboardRemove())
-        elif users[cid]["state"] == "get_age" and message.text and message.text.isdigit():
-            users[cid].update({"age": message.text, "state": "main"})
-            save_db(USERS_FILE, users)
-            bot.send_message(cid, "🎉 خوش اومدی!", reply_markup=main_kb(cid))
+        if text == "/start" or cid not in users:
+            users[cid] = {"state": "get_name"}
+            save_db(users)
+            bot.send_message(cid, "✨ **خوش آمدید!**\n\nبرای شروع این ماجراجویی، یک **نام مستعار** جذاب برای خودت انتخاب کن و بفرست:")
+            return
+
+        u_state = users[cid].get("state")
+        if u_state == "get_name":
+            users[cid].update({"name": text[:20], "state": "get_gender"})
+            save_db(users)
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            kb.add("👦 شوالیه (آقا)", "👧 بانو (خانم)")
+            bot.send_message(cid, f"✅ عالیه **{text}** عزیز!\n\nحالا جنسیت خودت رو مشخص کن:", reply_markup=kb)
+        elif u_state == "get_gender":
+            gender = "male" if "شوالیه" in text else "female"
+            users[cid].update({"gender": gender, "state": "get_age"})
+            save_db(users)
+            bot.send_message(cid, "🎂 **چند سالته؟**\n(لطفاً سن خودت رو به عدد انگلیسی یا فارسی بفرست)", reply_markup=types.ReplyKeyboardRemove())
+        elif u_state == "get_age" and text.isdigit():
+            users[cid].update({"age": text, "state": "main"})
+            save_db(users)
+            bot.send_message(cid, "🎉 **شناسنامه تو با موفقیت صادر شد!**\n\nحالا می‌تونی وارد دنیای ناشناس بشی.", reply_markup=main_kb(cid))
         return
 
-    user_data = users[cid]
-    
-    # ۴. پیام همگانی ادمین
-    if user_data.get("state") == "broad_wait" and cid == str(ADMIN_ID):
-        user_data["temp_msg"] = message.message_id
-        user_data["state"] = "broad_confirm"
-        save_db(USERS_FILE, users)
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚀 بله، بفرست", callback_data="bc_yes"), types.InlineKeyboardButton("❌ لغو", callback_data="bc_no"))
-        bot.send_message(cid, "⚠️ از ارسال این پیام برای همه مطمئنی؟", reply_markup=kb)
-        return
+    # ۴. هندل منوی اصلی
+    user = users[cid]
+    if user["state"] == "main":
+        if text == "🔥 شکارِ هم‌صحبت":
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(types.InlineKeyboardButton("👦 گپ با آقایان", callback_data="find_male"),
+                   types.InlineKeyboardButton("👧 گپ با خانم‌ها", callback_data="find_female"))
+            kb.add(types.InlineKeyboardButton("🌈 فرقی نمی‌کند", callback_data="find_any"))
+            bot.send_message(cid, "🛰 **رادارهای جستجو فعال شدند...**\n\nدوست داری با چه کسی هم‌کلام شوی؟", reply_markup=kb)
 
-    # ۵. منوی اصلی
-    if user_data["state"] == "main":
-        if message.text == "🔥 شکارِ هم‌صحبت":
-            kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("آقایان 👦", callback_data="f_male"), types.InlineKeyboardButton("خانم‌ها 👧", callback_data="f_female"))
-            bot.send_message(cid, "🛰 در حال جستجو...", reply_markup=kb)
-        elif message.text == "🎭 ایستگاهِ ناشناس":
-            link = user_data.get("link") or str(random.randint(100000, 999999))
-            users[cid]["link"] = link; save_db(USERS_FILE, users)
-            bot.send_message(cid, f"🎁 لینک تو:\n`https://t.me/{bot.get_me().username}?start={link}`", parse_mode="Markdown")
-        elif message.text == "💎 ویترینِ من":
-            bot.send_message(cid, f"📝 **اطلاعات تو:**\n👤 نام: {user_data['name']}\n🚻 جنسیت: {user_data['gender']}\n🎂 سن: {user_data['age']}")
-        elif message.text == "📢 طنینِ همگانی" and cid == str(ADMIN_ID):
-            users[cid]["state"] = "broad_wait"; save_db(USERS_FILE, users)
-            bot.send_message(cid, "📝 پیام رو بفرست:")
+        elif text == "🎭 ایستگاهِ ناشناس":
+            link = user.get("link") or str(random.randint(100000, 999999))
+            users[cid]["link"] = link; save_db(users)
+            bot.send_message(cid, f"🔗 **لینک اختصاصی تو آماده است!**\n\nاین لینک را در بیو یا استوری خود قرار بده تا دیگران بتوانند به تو پیام ناشناس بدهند:\n\n`https://t.me/{bot.get_me().username}?start={link}`", parse_mode="Markdown")
 
-    # ۶. نوشتن پیام ناشناس
-    elif user_data["state"] == "anon_writing":
-        users[cid]["pending"] = message.text
-        users[cid]["state"] = "anon_confirm"
-        save_db(USERS_FILE, users)
-        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚀 ارسال", callback_data="send_anon"), types.InlineKeyboardButton("❌ لغو", callback_data="cancel"))
-        bot.send_message(cid, "📝 ارسال بشه؟", reply_markup=kb)
+        elif text == "💎 ویترینِ من":
+            g_icon = "👦" if user['gender'] == 'male' else "👧"
+            bot.send_message(cid, f"👤 **پروفایل کاربری شما:**\n\n🆔 آیدی: `{cid}`\n✨ نام: {user['name']}\n🚻 جنسیت: {g_icon}\n🎂 سن: {user['age']}\n\n_وضعیت: آنلاین و آماده گفتگو_", parse_mode="Markdown")
 
-    # ۷. چت دو نفره (استفاده از chats.json)
-    elif user_data["state"] == "chat":
-        partner = user_data.get("partner")
-        if message.text == "✂️ پایانِ قصه":
-            # منطق قطع چت
+        elif text == "📢 طنینِ همگانی" and cid == ADMIN_ID:
+            users[cid]["state"] = "broad_wait"; save_db(users)
+            bot.send_message(cid, "📝 **پیام مورد نظر را ارسال کنید:**\n(متن، عکس یا فایل فرقی نمی‌کند)")
+
+    # ۵. منطق چت فعال (بدون باگ)
+    elif user["state"] == "chat":
+        partner = user.get("partner")
+        if text == "✂️ پایانِ قصه":
             users[cid]["state"] = "main"; users[partner]["state"] = "main"
-            save_db(USERS_FILE, users)
-            bot.send_message(cid, "🔚 قطع شد.", reply_markup=main_kb(cid))
-            bot.send_message(partner, "⚠️ طرف مقابل قطع کرد.", reply_markup=main_kb(partner))
+            save_db(users)
+            bot.send_message(cid, "🔚 **مکالمه پایان یافت.**", reply_markup=main_kb(cid))
+            bot.send_message(partner, "⚠️ **هم‌صحبت شما چت را ترک کرد.**", reply_markup=main_kb(partner))
         elif partner:
             try: bot.copy_message(partner, cid, message.message_id)
             except: pass
 
-# --- مدیریت دکمه‌های شیشه‌ای ---
+    # ۶. منطق پیام ناشناس
+    elif user["state"] == "writing_anon" and text:
+        user["pending"] = text; user["state"] = "confirm_anon"
+        save_db(users)
+        kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚀 شلیک (ارسال نهایی)", callback_data="send_anon"), 
+                                              types.InlineKeyboardButton("❌ انصراف", callback_data="cancel_anon"))
+        bot.send_message(cid, f"📝 **پیش‌نمایش پیام:**\n\n_{text}_\n\nآیا از ارسال مطمئن هستی؟", reply_markup=kb, parse_mode="Markdown")
+
+# --- مدیریت کلیک‌های شیشه‌ای (Callback) ---
 @bot.callback_query_handler(func=lambda c: True)
 def callback_handler(call):
     cid = str(call.message.chat.id)
-    users = load_db(USERS_FILE)
-    
-    if call.data == "bc_yes":
-        msg_id = users[cid].get("temp_msg")
-        for u in users:
-            try: bot.copy_message(u, cid, msg_id)
-            except: pass
-        users[cid]["state"] = "main"; save_db(USERS_FILE, users)
-        bot.edit_message_text("✅ ارسال شد.", cid, call.message.id)
+    users = load_db()
+
+    if call.data == "verify_member":
+        if is_member(cid):
+            bot.delete_message(cid, call.message.id)
+            bot.send_message(cid, "✅ **عضویت تایید شد!** خوش آمدید.", reply_markup=main_kb(cid))
+            # رفرش کردن استیت به منو
+            if cid in users: users[cid]["state"] = "main"; save_db(users)
+        else:
+            bot.answer_callback_query(call.id, "❌ هنوز در کانال عضو نشده‌اید!", show_alert=True)
+
+    elif call.data.startswith("find_"):
+        pref = call.data.split("_")[1]
+        my_gender = users[cid].get("gender")
+        
+        # حذف از لیست‌های احتمالی قبلی
+        for key in waiting_room:
+            if cid in waiting_room[key]: waiting_room[key].remove(cid)
+
+        # پیدا کردن جفت
+        match = None
+        target_list = waiting_room["any"] if pref == "any" else waiting_room[pref]
+        
+        if target_list:
+            match = target_list.pop(0)
+            users[cid].update({"state": "chat", "partner": match})
+            users[match].update({"state": "chat", "partner": cid})
+            save_db(users)
+            bot.edit_message_text("💎 **هم‌صحبت پیدا شد!**\nهمین حالا گفتگو را شروع کنید.", cid, call.message.id)
+            bot.send_message(cid, "💬 برای امنیت، اطلاعات شخصی ندهید.", reply_markup=chat_kb())
+            bot.send_message(match, "💎 **یک نفر آماده گفتگو با شماست!**", reply_markup=chat_kb())
+        else:
+            waiting_room[my_gender if pref != "any" else "any"].append(cid)
+            bot.edit_message_text("🔍 **در جستجوی غریبه‌ای خوش‌سخن...**\nکمی صبور باشید.", cid, call.message.id)
 
     elif call.data == "send_anon":
         target = users[cid].get("target")
         msg = users[cid].get("pending")
-        bot.send_message(target, f"📬 پیام ناشناس:\n\n{msg}")
-        users[cid]["state"] = "main"; save_db(USERS_FILE, users)
-        bot.edit_message_text("✅ فرستاده شد.", cid, call.message.id)
-        bot.send_message(cid, "🏡 منوی اصلی", reply_markup=main_kb(cid))
-
-    elif call.data == "verify":
-        if is_member(cid):
-            bot.answer_callback_query(call.id, "✅ تایید شد!")
-            bot.delete_message(cid, call.message.id)
-        else:
-            bot.answer_callback_query(call.id, "❌ عضو نشدی!", show_alert=True)
+        bot.send_message(target, f"📬 **یک پیام ناشناس جدید داری:**\n\n_{msg}_", parse_mode="Markdown")
+        users[cid]["state"] = "main"; save_db(users)
+        bot.edit_message_text("✅ **پیام شما با موفقیت و در امنیت کامل ارسال شد.**", cid, call.message.id)
+        bot.send_message(cid, "🏡 بازگشت به منوی اصلی", reply_markup=main_kb(cid))
 
 if __name__ == "__main__":
     keep_alive()
