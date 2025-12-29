@@ -5,7 +5,7 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-# --- تنظیمات سرور برای آنلاین ماندن ---
+# --- تنظیمات سرور برای آنلاین ماندن در رندر ---
 app = Flask('')
 
 @app.route('/')
@@ -25,14 +25,10 @@ BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
 
 USERS_FILE = "users.json"
-CHATS_FILE = "chats.json"
-
-users = {}
 links = {}
-# لیست انتظار بر اساس جنسیت خود فرد (پسرها در male، دخترها در female)
 waiting = {"male": [], "female": []}
 anon_pending = {}
-chats = []
+users = {}
 
 # ---------- بارگذاری داده‌ها ----------
 if os.path.exists(USERS_FILE):
@@ -42,9 +38,6 @@ if os.path.exists(USERS_FILE):
 
 def save_users():
     json.dump(users, open(USERS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-
-def save_chats():
-    json.dump(chats, open(CHATS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
 # ---------- کیبوردها ----------
 def main_kb():
@@ -78,12 +71,13 @@ def start(message):
     cid = str(message.chat.id)
     args = message.text.split()
 
+    # لینک ناشناس
     if len(args) > 1:
         code = args[1]
         if code in links:
             owner = links[code]
             if owner == cid:
-                bot.send_message(cid, "❌ نمی‌تونی به خودت پیام بدی")
+                bot.send_message(cid, "❌ نمی‌تونی به خودت پیام بدی!")
                 return
             users.setdefault(cid, {"name": message.from_user.first_name})
             users[cid]["state"] = "anon_write"
@@ -168,7 +162,6 @@ def handle(message):
             user["partner"] = None
             main_menu(cid)
             return
-
         partner = user.get("partner")
         if partner:
             bot.send_message(partner, text)
@@ -191,53 +184,66 @@ def callback(call):
     user = users.get(cid)
     if not user: return
 
+    # منطق جستجو
     if call.data.startswith("search_"):
-        pref = call.data.replace("search_", "") # چیزی که کاربر میخواد
-        user_gender = user.get("gender") # جنسیت خود کاربر
+        pref = call.data.replace("search_", "")
+        user_gender = user.get("gender")
         user["state"] = "searching"
         user["search_pref"] = pref
-        
-        # پیدا کردن کسی که با خواسته ما جور باشه
-        # اگر "فرقی نداره" زدیم، هم تو لیست پسرا میگردیم هم دخترا
         search_in = ["male", "female"] if pref == "any" else [pref]
         
         found = False
         for g in search_in:
             for pid in waiting[g]:
                 partner = users.get(pid)
-                # طرف مقابل باید دنبال جنسیت ما باشه یا براش فرق نکنه
                 if partner and (partner.get("search_pref") == "any" or partner.get("search_pref") == user_gender):
-                    # وصل شدن
-                    user["partner"] = pid
-                    partner["partner"] = cid
+                    user["partner"], partner["partner"] = pid, cid
                     user["state"] = partner["state"] = "chat"
                     waiting[g].remove(pid)
-                    
-                    bot.send_message(cid, "🎉 به یه ناشناس وصل شدی! سلام کن...", reply_markup=end_chat_kb())
-                    bot.send_message(pid, "🎉 به یه ناشناس وصل شدی! سلام کن...", reply_markup=end_chat_kb())
+                    bot.send_message(cid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
+                    bot.send_message(pid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
                     save_users()
                     found = True
                     break
             if found: break
 
         if not found:
-            if cid not in waiting[user_gender]:
-                waiting[user_gender].append(cid)
-            bot.edit_message_text("⏳ در حال جستجو... هر وقت کسی پیدا بشه وصل میشی.", call.message.chat.id, call.message.message_id)
-            bot.send_message(cid, "میتونی جستجو رو لغو کنی:", reply_markup=cancel_search_kb())
+            if cid not in waiting[user_gender]: waiting[user_gender].append(cid)
+            bot.edit_message_text("⏳ در حال جستجو...", cid, call.message.id)
+            bot.send_message(cid, "میتونی لغو کنی:", reply_markup=cancel_search_kb())
 
+    # تایید ارسال پیام ناشناس با قابلیت پاسخ و تیک خوانده شد
     if user["state"] == "anon_confirm":
         if call.data == "anon_send":
             target = user["anon_target"]
             msg = anon_pending.pop(cid, "پیام خالی")
-            bot.send_message(target, f"📩 یه پیام ناشناس داری:\n\n{msg}")
-            bot.send_message(cid, "✅ ارسال شد!")
+            
+            kb = types.InlineKeyboardMarkup()
+            # ذخیره آیدی فرستنده در کال‌بک دکمه برای پاسخ دادن
+            kb.add(types.InlineKeyboardButton("💬 پاسخ", callback_data=f"rep_{cid}"))
+            
+            bot.send_message(target, f"📩 پیام ناشناس جدید:\n\n{msg}", reply_markup=kb)
+            bot.send_message(cid, "✅ ارسال شد. به محض اینکه طرف مقابل پیام رو ببینه (دکمه پاسخ رو بزنه) بهت خبر میدم.")
             main_menu(cid)
         else:
             main_menu(cid)
 
+    # وقتی گیرنده روی پاسخ کلیک می‌کند
+    if call.data.startswith("rep_"):
+        sender_id = call.data.replace("rep_", "")
+        
+        # اطلاع‌رسانی به فرستنده که پیامش خوانده شده
+        try:
+            bot.send_message(sender_id, "👁️ طرف مقابل پیام ناشناس تو رو خواند و در حال نوشتن پاسخه...")
+        except: pass
+        
+        user["state"] = "anon_write"
+        user["anon_target"] = sender_id
+        bot.send_message(cid, "✏️ پاسخ خودت رو بنویس:")
+        bot.answer_callback_query(call.id, text="تیک خوانده شد برای فرستنده ارسال شد.")
+
 # ---------- شروع برنامه ----------
 if __name__ == "__main__":
-    keep_alive() # بیدار باش!
+    keep_alive()
     print("Bot is running...")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
