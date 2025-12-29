@@ -5,7 +5,7 @@ from datetime import datetime
 from flask import Flask
 from threading import Thread
 
-# --- تنظیمات سرور برای آنلاین ماندن در رندر ---
+# --- تنظیمات سرور برای آنلاین ماندن ---
 app = Flask('')
 
 @app.route('/')
@@ -20,24 +20,41 @@ def keep_alive():
     t.start()
 # -----------------------------------
 
+# توکن را اینجا قرار بده یا از Environment Variables استفاده کن
 TOKEN = "8213706320:AAFzfV_WAdvvA_Td2-JJvOoqvKyHnjIoyeM"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
 
 USERS_FILE = "users.json"
+CHATS_FILE = "chats.json"
+
+users = {}
 links = {}
 waiting = {"male": [], "female": []}
 anon_pending = {}
-users = {}
+chats = []
 
 # ---------- بارگذاری داده‌ها ----------
-if os.path.exists(USERS_FILE):
-    try:
-        users = json.load(open(USERS_FILE, "r", encoding="utf-8"))
-    except: users = {}
+def load_data():
+    global users, chats
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                users = json.load(f)
+        except: users = {}
+    if os.path.exists(CHATS_FILE):
+        try:
+            with open(CHATS_FILE, "r", encoding="utf-8") as f:
+                chats = json.load(f)
+        except: chats = []
 
 def save_users():
-    json.dump(users, open(USERS_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def save_chats():
+    with open(CHATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(chats, f, ensure_ascii=False, indent=2)
 
 # ---------- کیبوردها ----------
 def main_kb():
@@ -65,19 +82,18 @@ def main_menu(cid):
     bot.send_message(cid, f"✨ سلام {users[cid]['name']} خوش اومدی 😎", reply_markup=main_kb())
     save_users()
 
-# ---------- دستور Start ----------
+# ---------- شروع ربات ----------
 @bot.message_handler(commands=["start"])
 def start(message):
     cid = str(message.chat.id)
     args = message.text.split()
 
-    # لینک ناشناس
     if len(args) > 1:
         code = args[1]
         if code in links:
             owner = links[code]
             if owner == cid:
-                bot.send_message(cid, "❌ نمی‌تونی به خودت پیام بدی!")
+                bot.send_message(cid, "❌ نمی‌تونی به خودت پیام ناشناس بدی!")
                 return
             users.setdefault(cid, {"name": message.from_user.first_name})
             users[cid]["state"] = "anon_write"
@@ -107,7 +123,7 @@ def handle(message):
     if state == "name":
         user["name"] = text.strip()
         user["state"] = "gender"
-        bot.send_message(cid, f"✅ اسمت ثبت شد ({user['name']})\n🚻 جنسیتت چیه؟", reply_markup=gender_kb())
+        bot.send_message(cid, f"✅ اسمت ثبت شد\n🚻 جنسیتت چیه؟", reply_markup=gender_kb())
         save_users()
         return
 
@@ -135,7 +151,6 @@ def handle(message):
             bot.send_message(cid, f"🔗 لینک ناشناس تو:\nhttps://t.me/{BOT_USERNAME}?start={code}")
             save_users()
             return
-
         if text == "🔗 به یه ناشناس وصل کن":
             kb = types.InlineKeyboardMarkup()
             kb.add(
@@ -153,8 +168,8 @@ def handle(message):
         return
 
     if state == "chat":
+        partner = user.get("partner")
         if text == "❌ پایان چت":
-            partner = user.get("partner")
             if partner and partner in users:
                 users[partner]["partner"] = None
                 main_menu(partner)
@@ -162,9 +177,18 @@ def handle(message):
             user["partner"] = None
             main_menu(cid)
             return
-        partner = user.get("partner")
+        
         if partner:
+            # ارسال پیام
             bot.send_message(partner, text)
+            # ذخیره پیام در فایل chats.json
+            chats.append({
+                "from": cid,
+                "to": partner,
+                "text": text,
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
+            save_chats()
 
     if state == "anon_write":
         anon_pending[cid] = text
@@ -177,14 +201,13 @@ def handle(message):
         bot.send_message(cid, f"مطمئنی این پیام ارسال بشه؟\n\n{text}", reply_markup=kb)
         return
 
-# ---------- مدیریت کلیک‌ها (کال‌بک) ----------
+# ---------- مدیریت کلیک‌ها ----------
 @bot.callback_query_handler(func=lambda c: True)
 def callback(call):
     cid = str(call.message.chat.id)
     user = users.get(cid)
     if not user: return
 
-    # منطق جستجو
     if call.data.startswith("search_"):
         pref = call.data.replace("search_", "")
         user_gender = user.get("gender")
@@ -200,50 +223,35 @@ def callback(call):
                     user["partner"], partner["partner"] = pid, cid
                     user["state"] = partner["state"] = "chat"
                     waiting[g].remove(pid)
-                    bot.send_message(cid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
-                    bot.send_message(pid, "🎉 به یه ناشناس وصل شدی!", reply_markup=end_chat_kb())
+                    bot.send_message(cid, "🎉 وصل شدی!", reply_markup=end_chat_kb())
+                    bot.send_message(pid, "🎉 وصل شدی!", reply_markup=end_chat_kb())
                     save_users()
                     found = True
                     break
             if found: break
-
         if not found:
             if cid not in waiting[user_gender]: waiting[user_gender].append(cid)
             bot.edit_message_text("⏳ در حال جستجو...", cid, call.message.id)
-            bot.send_message(cid, "میتونی لغو کنی:", reply_markup=cancel_search_kb())
 
-    # تایید ارسال پیام ناشناس با قابلیت پاسخ و تیک خوانده شد
-    if user["state"] == "anon_confirm":
-        if call.data == "anon_send":
-            target = user["anon_target"]
-            msg = anon_pending.pop(cid, "پیام خالی")
-            
-            kb = types.InlineKeyboardMarkup()
-            # ذخیره آیدی فرستنده در کال‌بک دکمه برای پاسخ دادن
-            kb.add(types.InlineKeyboardButton("💬 پاسخ", callback_data=f"rep_{cid}"))
-            
-            bot.send_message(target, f"📩 پیام ناشناس جدید:\n\n{msg}", reply_markup=kb)
-            bot.send_message(cid, "✅ ارسال شد. به محض اینکه طرف مقابل پیام رو ببینه (دکمه پاسخ رو بزنه) بهت خبر میدم.")
-            main_menu(cid)
-        else:
-            main_menu(cid)
+    if call.data == "anon_send":
+        target = user["anon_target"]
+        msg = anon_pending.pop(cid, "پیام خالی")
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💬 پاسخ", callback_data=f"rep_{cid}"))
+        bot.send_message(target, f"📩 پیام ناشناس جدید:\n\n{msg}", reply_markup=kb)
+        bot.send_message(cid, "✅ ارسال شد.")
+        main_menu(cid)
 
-    # وقتی گیرنده روی پاسخ کلیک می‌کند
     if call.data.startswith("rep_"):
         sender_id = call.data.replace("rep_", "")
-        
-        # اطلاع‌رسانی به فرستنده که پیامش خوانده شده
-        try:
-            bot.send_message(sender_id, "👁️ طرف مقابل پیام ناشناس تو رو خواند و در حال نوشتن پاسخه...")
+        try: bot.send_message(sender_id, "👁️ پیام تو خوانده شد...")
         except: pass
-        
         user["state"] = "anon_write"
         user["anon_target"] = sender_id
-        bot.send_message(cid, "✏️ پاسخ خودت رو بنویس:")
-        bot.answer_callback_query(call.id, text="تیک خوانده شد برای فرستنده ارسال شد.")
+        bot.send_message(cid, "✏️ پاسخ رو بنویس:")
 
-# ---------- شروع برنامه ----------
+# ---------- اجرا ----------
 if __name__ == "__main__":
+    load_data()
     keep_alive()
-    print("Bot is running...")
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+    bot.infinity_polling(timeout=20, long_polling_timeout=10, restart_on_change=True)
