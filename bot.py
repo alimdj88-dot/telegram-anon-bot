@@ -9,7 +9,7 @@ import time
 # --- تنظیمات سرور ---
 app = Flask('')
 @app.route('/')
-def home(): return "✅ Bot is Online with Super UI!"
+def home(): return "✅ Bot is Online & Fully Fixed!"
 
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive():
@@ -17,8 +17,8 @@ def keep_alive():
     t.start()
 
 # --- تنظیمات اصلی ---
-TOKEN = "8213706320:AAHWvqLR20DiFhhRdyTs34J55E38Cbmz-zA"
-ADMIN_ID = "8013245091" # <--- آیدی عددی خودت رو اینجا بذار
+TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
+ADMIN_ID = "8013245091" # <--- آیدی عددی خودت رو اینجا بذار (مثال: 12345678)
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
 
@@ -74,7 +74,6 @@ def start(message):
         bot.send_message(cid, "⛔️ **دسترسی شما به دلیل تخلف مسدود شده است.**", parse_mode="Markdown")
         return
 
-    # مدیریت لینک ناشناس
     args = message.text.split()
     if len(args) > 1:
         target_id = None
@@ -87,27 +86,22 @@ def start(message):
             if target_id == cid:
                 bot.send_message(cid, "❌ **شوخی میکنی؟ نمیتونی به خودت پیام ناشناس بدی!**", parse_mode="Markdown")
                 return
-            users.setdefault(cid, {"state": "main"})
+            users.setdefault(cid, {"name": message.from_user.first_name})
             users[cid]["state"] = "anon_write"
             users[cid]["anon_target"] = target_id
-            bot.send_message(cid, "🤫 **در حال ارسال پیام ناشناس...**\n\nهر چه دل تنگت می‌خواهد بنویس (پیام تو کاملاً مخفی می‌ماند):", reply_markup=types.ReplyKeyboardRemove())
+            bot.send_message(cid, "🤫 **در حال ارسال پیام ناشناس...**\n\nهر چه دل تنگت می‌خواهد بنویس تا به صورت کاملاً مخفی ارسال شود:", reply_markup=types.ReplyKeyboardRemove())
             save_users()
             return
 
-    # ثبت نام کاربر جدید
     if cid not in users or "gender" not in users[cid]:
         users[cid] = {"state": "get_name"}
-        welcome_text = (
-            "👋 **سلام به چت‌باکس خوش اومدی!**\n\n"
-            "اینجا می‌تونی با آدم‌های جدید چت کنی یا لینک ناشناس بگیری.\n"
-            "🔸 برای شروع، **نام یا مستعارت** رو بفرست:"
-        )
+        welcome_text = "👋 **سلام به چت‌باکس خوش اومدی!**\n\n🔸 برای شروع، **نام یا مستعارت** رو بفرست:"
         bot.send_message(cid, welcome_text, parse_mode="Markdown")
         save_users()
         return
     
     users[cid]["state"] = "main"
-    bot.send_message(cid, "🏡 **به منوی اصلی خوش اومدی!**\nاز دکمه‌های زیر استفاده کن:", reply_markup=main_kb())
+    bot.send_message(cid, "🏡 **به منوی اصلی خوش اومدی!**", reply_markup=main_kb())
 
 @bot.message_handler(content_types=['text', 'photo', 'voice', 'video', 'sticker'])
 def handle_all(message):
@@ -129,17 +123,15 @@ def handle_all(message):
     if user["state"] == "get_gender" and text:
         user["gender"] = "male" if "آقا" in text else "female"
         user["state"] = "get_age"
-        bot.send_message(cid, "🎂 **سن شما؟** (فقط عدد بفرست)", reply_markup=types.ReplyKeyboardRemove())
+        bot.send_message(cid, "🎂 **سن شما؟** (عدد بفرست)", reply_markup=types.ReplyKeyboardRemove())
         return
 
     if user["state"] == "get_age" and text:
-        if text.isdigit() and 10 < int(text) < 99:
+        if text.isdigit():
             user["age"] = int(text)
             user["state"] = "main"
-            bot.send_message(cid, "🎉 **تبریک! پروفایل شما ساخته شد.**", reply_markup=main_kb())
+            bot.send_message(cid, "🎉 **پروفایل شما با موفقیت ساخته شد.**", reply_markup=main_kb())
             save_users()
-        else:
-            bot.send_message(cid, "❌ لطفا یک سن معتبر (عدد) بفرست.")
         return
 
     # --- چت فعال ---
@@ -147,25 +139,23 @@ def handle_all(message):
         partner = user.get("partner")
         if text == "🔚 قطع مکالمه":
             kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("✅ بله، قطع کن", callback_data="confirm_end"),
+            kb.add(types.InlineKeyboardButton("✅ بله", callback_data="confirm_end"),
                    types.InlineKeyboardButton("❌ خیر", callback_data="cancel_end"))
-            bot.send_message(cid, "❓ **مطمئنی می‌خوای این چت رو تموم کنی؟**", reply_markup=kb, parse_mode="Markdown")
+            bot.send_message(cid, "❓ **مطمئنی می‌خوای چت رو تموم کنی؟**", reply_markup=kb, parse_mode="Markdown")
             return
         
         if text == "🚩 گزارش تخلف":
             kb = types.InlineKeyboardMarkup()
-            kb.add(types.InlineKeyboardButton("🚩 بله، گزارش تخلف", callback_data="report_confirm"))
+            kb.add(types.InlineKeyboardButton("🚩 تایید و انتخاب دلیل", callback_data="report_confirm"))
             bot.send_message(cid, "⚠️ **آیا این کاربر قانونی را نقض کرده است؟**", reply_markup=kb, parse_mode="Markdown")
             return
 
         if partner:
-            try:
-                if message.content_type == 'text': bot.send_message(partner, f"💬: {text}")
-                elif message.content_type == 'photo': bot.send_photo(partner, message.photo[-1].file_id, caption="🖼️ فایل تصویری")
-                elif message.content_type == 'voice': bot.send_voice(partner, message.voice.file_id)
-                elif message.content_type == 'video': bot.send_video(partner, message.video.file_id)
-                elif message.content_type == 'sticker': bot.send_sticker(partner, message.sticker.file_id)
-            except: pass
+            if message.content_type == 'text': bot.send_message(partner, f"💬: {text}")
+            elif message.content_type == 'photo': bot.send_photo(partner, message.photo[-1].file_id)
+            elif message.content_type == 'voice': bot.send_voice(partner, message.voice.file_id)
+            elif message.content_type == 'video': bot.send_video(partner, message.video.file_id)
+            elif message.content_type == 'sticker': bot.send_sticker(partner, message.sticker.file_id)
 
     # --- منوی اصلی ---
     if user["state"] == "main" and text:
@@ -179,38 +169,25 @@ def handle_all(message):
         elif text == "🔗 لینک من":
             code = user.get("link") or str(random.randint(100000, 999999))
             user["link"] = code
-            bot.send_message(cid, f"🎁 **لینک ناشناس تو ساخته شد!**\n\nاین لینک رو توی بیو اینستاگرام یا چنلت بذار:\n\n`https://t.me/{BOT_USERNAME}?start={code}`", parse_mode="Markdown")
+            bot.send_message(cid, f"🎁 **لینک ناشناس تو:**\n\n`https://t.me/{BOT_USERNAME}?start={code}`", parse_mode="Markdown")
             save_users()
 
         elif text == "👤 پروفایل":
             gender_icon = "👦" if user['gender'] == 'male' else "👧"
-            profile = (
-                f"👤 **نام:** {user['name']}\n"
-                f"🎂 **سن:** {user['age']}\n"
-                f"🚻 **جنسیت:** {gender_icon}\n"
-                "─────────────────\n"
-                f"⭐ **امتیاز:** 5/5"
-            )
+            profile = f"👤 **نام:** {user['name']}\n🎂 **سن:** {user['age']}\n🚻 **جنسیت:** {gender_icon}"
             bot.send_message(cid, profile, parse_mode="Markdown")
 
         elif text == "ℹ️ راهنما":
-            guide = (
-                "📖 **راهنمای چت‌باکس:**\n\n"
-                "📍 **چت اتفاقی:** به صورت ناشناس به یک نفر وصل میشی.\n"
-                "📍 **لینک ناشناس:** بقیه میتونن بهت پیام بدن بدون اینکه بشناسیشون.\n"
-                "📍 **امنیت:** در صورت ایجاد مزاحمت، از دکمه گزارش استفاده کن."
-            )
+            guide = "📖 **راهنما:**\n1- چت ناشناس برای وصل شدن به غریبه‌ها.\n2- لینک من برای دریافت پیام ناشناس."
             bot.send_message(cid, guide, parse_mode="Markdown")
 
-    # --- فرآیند ارسال پیام ناشناس ---
+    # --- نوشتن پیام ناشناس ---
     if user["state"] == "anon_write" and text:
         anon_pending[cid] = text
-        user["state"] = "main" # برگرداندن به حالت اصلی بعد از دریافت متن
         kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("🚀 ارسال نهایی", callback_data="send_anon_final"),
+        kb.add(types.InlineKeyboardButton("🚀 ارسال", callback_data="send_anon_final"),
                types.InlineKeyboardButton("❌ لغو", callback_data="cancel_anon"))
-        bot.send_message(cid, f"📝 **پیش‌نمایش پیام شما:**\n\n_{text}_\n\nآیا ارسال شود؟", reply_markup=kb, parse_mode="Markdown")
-        save_users()
+        bot.send_message(cid, f"📝 **متن شما:**\n\n_{text}_\n\nآیا ارسال شود؟", reply_markup=kb, parse_mode="Markdown")
 
 # ---------- کال‌بک‌ها ----------
 @bot.callback_query_handler(func=lambda c: True)
@@ -219,12 +196,10 @@ def callback(call):
     user = users.get(cid)
     if not user: return
 
+    # جستجو
     if call.data.startswith("s_"):
         pref = call.data.replace("s_", "")
         user.update({"search_pref": pref, "state": "searching"})
-        bot.edit_message_text("🔍 **در حال جستجوی هم‌صحبت...**", cid, call.message.id, parse_mode="Markdown")
-        
-        # منطق مچینگ سریع
         found = False
         search_list = ["male", "female"] if pref == "any" else [pref]
         for g in search_list:
@@ -234,27 +209,55 @@ def callback(call):
                     p = users[pid]
                     user.update({"partner": pid, "state": "chat"})
                     p.update({"partner": cid, "state": "chat"})
-                    bot.send_message(cid, "💎 **به هم‌صحبت وصل شدی!**\nحالا میتونی چت رو شروع کنی.", reply_markup=end_chat_kb(), parse_mode="Markdown")
-                    bot.send_message(pid, "💎 **به هم‌صحبت وصل شدی!**\nحالا میتونی چت رو شروع کنی.", reply_markup=end_chat_kb(), parse_mode="Markdown")
+                    bot.send_message(cid, "💎 **وصل شدی!**", reply_markup=end_chat_kb())
+                    bot.send_message(pid, "💎 **وصل شدی!**", reply_markup=end_chat_kb())
                     found = True; break
         if not found:
             waiting[user['gender']].append(cid)
+            bot.edit_message_text("🔍 **در حال جستجو...**", cid, call.message.id)
 
+    # گزارش تخلف
+    if call.data == "report_confirm":
+        kb = types.InlineKeyboardMarkup()
+        reasons = [("توهین 🤬", "r_insult"), ("محتوای نامناسب 🔞", "r_18"), ("اسپم 📢", "r_spam")]
+        for t, d in reasons: kb.add(types.InlineKeyboardButton(t, callback_data=d))
+        bot.edit_message_text("📍 دلیل گزارش را انتخاب کنید:", cid, call.message.id, reply_markup=kb)
+
+    if call.data.startswith("r_"):
+        partner_id = user.get("partner")
+        if partner_id:
+            bot.send_message(ADMIN_ID, f"🚨 **گزارش**\nمتخلف: `{partner_id}`\nدلیل: {call.data}\nتوسط: `{cid}`")
+            bot.send_message(cid, "✅ گزارش ارسال و چت قطع شد.")
+            bot.send_message(partner_id, "⚠️ مکالمه به دلیل گزارش پایان یافت.")
+            users[partner_id].update({"partner": None, "state": "main"})
+            user.update({"partner": None, "state": "main"})
+            bot.send_message(cid, "🏡 منوی اصلی", reply_markup=main_kb())
+            bot.send_message(partner_id, "🏡 منوی اصلی", reply_markup=main_kb())
+
+    # ارسال پیام ناشناس (لینک)
     if call.data == "send_anon_final":
         target = user.get("anon_target")
         msg = anon_pending.pop(cid, "")
         if target:
-            bot.send_message(target, f"📬 **یک پیام ناشناس جدید داری:**\n\n_{msg}_", parse_mode="Markdown")
-            bot.send_message(cid, "✅ **پیام شما با موفقیت و به صورت ناشناس ارسال شد.**", reply_markup=main_kb(), parse_mode="Markdown")
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("📩 پاسخ به این پیام", callback_data=f"rep_{cid}"))
+            bot.send_message(target, f"📬 **پیام ناشناس جدید:**\n\n_{msg}_", reply_markup=kb, parse_mode="Markdown")
+            bot.send_message(cid, "✅ ارسال شد.", reply_markup=main_kb())
         user["state"] = "main"
+
+    # پاسخ به پیام ناشناس
+    if call.data.startswith("rep_"):
+        sender_id = call.data.replace("rep_", "")
+        user.update({"state": "anon_write", "anon_target": sender_id})
+        bot.send_message(cid, "✍️ پاسخت رو بنویس:")
 
     if call.data == "confirm_end":
         p_id = user.get("partner")
         if p_id:
             users[p_id].update({"partner": None, "state": "main"})
-            bot.send_message(p_id, "⚠️ **هم‌صحبت شما چت را ترک کرد.**", reply_markup=main_kb(), parse_mode="Markdown")
+            bot.send_message(p_id, "⚠️ چت قطع شد.", reply_markup=main_kb())
         user.update({"partner": None, "state": "main"})
-        bot.send_message(cid, "🔚 **مکالمه پایان یافت.**", reply_markup=main_kb(), parse_mode="Markdown")
+        bot.send_message(cid, "🔚 چت قطع شد.", reply_markup=main_kb())
 
 if __name__ == "__main__":
     load_data()
