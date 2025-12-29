@@ -20,7 +20,7 @@ def keep_alive():
     t.start()
 # -----------------------------------
 
-TOKEN = "8213706320:AAEICB4U73ucmYi9SJwj52wTsq2sPz0N9Q0"
+TOKEN = "8213706320:AAFzfV_WAdvvA_Td2-JJvOoqvKyHnjIoyeM"
 BOT_USERNAME = "Chatnashenas_IriBot"
 bot = telebot.TeleBot(TOKEN)
 
