@@ -25,8 +25,8 @@ def get_db():
     with open(DB_PATH, "r", encoding="utf-8") as f:
         try:
             data = json.load(f)
-            if "banned" not in data: data["banned"] = []
-            if "chat_history" not in data: data["chat_history"] = {}
+            for key in ["banned", "chat_history"]:
+                if key not in data: data[key] = [] if key == "banned" else {}
             if "queue" not in data: data["queue"] = {"male": [], "female": [], "any": []}
             return data
         except: return {"users": {}, "queue": {"male": [], "female": [], "any": []}, "banned": [], "chat_history": {}}
@@ -71,44 +71,47 @@ def handle_messages(message):
         bot.send_message(uid, "✨ مسافر عزیز! برای ورود به تالار اصلی محفل، ابتدا باید در کانال ما حضور داشته باشی. منتظرت هستیم...", reply_markup=btn)
         return
 
+    # مدیریت ادمین
     if uid == OWNER_ID and text == "📊 آمار و دیتابیس":
-        males = sum(1 for u in db["users"].values() if u.get("gender") == "male")
-        females = sum(1 for u in db["users"].values() if u.get("gender") == "female")
-        stats = f"📜 **آمار اهالی محفل:**\n\n👥 کل کاربران: {len(db['users'])}\n👦 شوالیه‌ها: {males}\n👧 بانوها: {females}\n🚫 مسدود شده‌ها: {len(db['banned'])}"
+        m = sum(1 for u in db["users"].values() if u.get("gender") == "male")
+        f = sum(1 for u in db["users"].values() if u.get("gender") == "female")
+        stats = f"📜 **وضعیت اهالی محفل سایه‌ها:**\n\n👥 کل کاربران: {len(db['users'])}\n👦 شوالیه‌ها: {m}\n👧 بانوها: {f}\n🚫 لیست سیاه: {len(db['banned'])}"
         btn = types.InlineKeyboardMarkup()
-        btn.add(types.InlineKeyboardButton("📥 دریافت فایل دیتابیس", callback_data="get_db_file"))
+        btn.add(types.InlineKeyboardButton("📥 دریافت دیتابیس", callback_data="get_db_file"))
         btn.add(types.InlineKeyboardButton("🚫 مدیریت لیست سیاه", callback_data="manage_banned"))
         bot.send_message(uid, stats, reply_markup=btn)
         return
 
+    # سیستم استارت و ثبت‌نام
     if text and text.startswith("/start"):
         if uid in db["users"] and db["users"][uid].get("state") == "in_chat":
-            bot.send_message(uid, "🕯 شما در حال حاضر در یک رشته اتصال هستید. برای بازگشت به منو، ابتدا گفتگو را قطع کنید.")
+            bot.send_message(uid, "🕯 شما در میان یک گفتگو هستید. ابتدا با دکمه قطع ارتباط، به تالار بازگردید.")
             return
 
         if len(text.split()) == 1:
             if uid not in db["users"] or "name" not in db["users"][uid]:
                 db["users"][uid] = {"state": "reg_name"}
                 save_db(db)
-                welcome_text = "🕯 **به محفل سایه‌ها خوش آمدی، مسافر...**\n\nاینجا جاییه که نقاب‌ها می‌افته و روح‌ها بدون ترس از قضاوت با هم حرف می‌زنن. برای ورود به تالار، باید هویت خودت رو ثبت کنی.\n\n👤 **یک نام مستعار برای کتیبه محفل بنویس:**"
-                bot.send_message(uid, welcome_text, parse_mode="Markdown")
+                bot.send_message(uid, "🕯 **به محفل سایه‌ها خوش آمدی، مسافر...**\n\nاینجا جاییه که نقاب‌ها می‌افته و روح‌ها بدون ترس از قضاوت با هم حرف می‌زنن. برای ورود به تالار، باید اسمی برای خودت انتخاب کنی.\n\n👤 **یک نام مستعار برای خودت بنویس:**")
                 return
             else:
-                bot.send_message(uid, "🗝 به تالار اصلی خوش آمدی. سایه‌ها منتظر تو هستند...", reply_markup=main_menu(uid))
+                bot.send_message(uid, "🗝 به تالار اصلی خوش آمدی. سایه‌ها منتظر شنیدن صدای تو هستند...", reply_markup=main_menu(uid))
                 return
 
+        # لینک ناشناس
         code = text.split()[1]
         target = next((u for u, d in db["users"].items() if d.get("link") == code), None)
         if target == uid:
-            bot.send_message(uid, "🎭 داری برای خودت نامه می‌نویسی؟ این لینک رو پخش کن تا بقیه برات اعتراف کنن!")
+            bot.send_message(uid, "🎭 ای شیطون! داری برای خودت نامه می‌نویسی؟ این لینک رو پخش کن تا بقیه برات اعتراف کنن!")
             return
         if target:
             db["users"][uid] = db["users"].get(uid, {"state": "main"})
             db["users"][uid].update({"state": "writing_confession", "target": target})
             save_db(db)
-            bot.send_message(uid, "🕯 در خلوتگاه او هستی... هر چه در دل داری بنویس. هویت تو مثل یک رازِ مقدس محفوظ می‌مونه.", reply_markup=types.ReplyKeyboardRemove())
+            bot.send_message(uid, "🕯 در خلوتگاه او هستی... هر چه در دل داری بنویس. هویت تو مثل یک رازِ مقدس پیش من محفوظ می‌مونه.", reply_markup=types.ReplyKeyboardRemove())
             return
 
+    # هندل کردن مراحل ثبت نام
     if uid in db["users"] and db["users"][uid].get("state") in ["reg_name", "reg_gender", "reg_age"]:
         state = db["users"][uid]["state"]
         if state == "reg_name":
@@ -122,12 +125,21 @@ def handle_messages(message):
                 db["users"][uid].update({"age": text, "state": "main"})
                 save_db(db)
                 bot.send_message(uid, "📜 نامت در کتیبه محفل ثبت شد. حالا وقتشه هم‌فرکانس خودت رو پیدا کنی!", reply_markup=main_menu(uid))
-            else: bot.send_message(uid, "🎭 لطفاً سن رو فقط به صورت عدد بفرست.")
+            else: bot.send_message(uid, "🎭 سن رو فقط به صورت عدد بفرست.")
             return
 
     user = db["users"].get(uid)
     if not user: return
 
+    # بخش اعتراف (تأیید پیام)
+    if user.get("state") == "writing_confession" and text:
+        db["users"][uid].update({"state": "confirm_confession", "temp_msg": text})
+        save_db(db)
+        btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بفرست بره 🚀", callback_data="send_conf"), types.InlineKeyboardButton("پشیمون شدم ❌", callback_data="cancel_conf"))
+        bot.send_message(uid, f"📜 متنت رو با دقت خوندم. بفرستمش برای صاحب راز؟\n\n📝 متن تو:\n{text}", reply_markup=btn)
+        return
+
+    # سیستم چت دو نفره
     if user.get("state") == "in_chat":
         partner = user.get("partner")
         if text == "✂️ قطع ارتباط":
@@ -137,49 +149,53 @@ def handle_messages(message):
             btn = types.InlineKeyboardMarkup(row_width=1)
             reasons = ["توهین و بی‌ادبی 🤬", "تبلیغات مزاحم 📢", "محتوای نامناسب 🔞", "مزاحمت ❌", "لغو گزارش 🔙"]
             for r in reasons: btn.add(types.InlineKeyboardButton(r, callback_data=f"report_{r}"))
-            bot.send_message(uid, "🚩 دلیل گزارش رو انتخاب کن تا نگهبان‌های محفل بررسی کنن:", reply_markup=btn)
+            bot.send_message(uid, "🚩 دلیل گزارش رو انتخاب کن تا نگهبان‌ها بررسی کنن:", reply_markup=btn)
         else:
             chat_id = f"{min(uid, partner)}_{max(uid, partner)}"
             if chat_id not in db["chat_history"]: db["chat_history"][chat_id] = []
             if text:
-                db["chat_history"][chat_id].append(f"🆔 {uid} | {user['name']}: {text}")
+                db["chat_history"][chat_id].append(f"ID:{uid} | {text}")
                 if len(db["chat_history"][chat_id]) > 10: db["chat_history"][chat_id].pop(0)
                 save_db(db)
             try: bot.copy_message(partner, uid, message.message_id)
             except: pass
         return
 
+    # پاسخ به پیام ناشناس (ریپلای)
     if message.reply_to_message:
         target_uid = next((u for u, d in db["users"].items() if d.get("last_anon_msg_id") == message.reply_to_message.message_id), None)
         if target_uid:
-            sent_msg = bot.send_message(target_uid, f"💌 **پاسخی در خلوتگاه تو طنین‌انداز شد:**\n\n{text}\n\n➖➖➖➖➖➖\n💡 می‌تونی با ریپلای کردن، این گفتگو رو ادامه بدی.")
-            db["users"][target_uid]["last_anon_msg_id"] = sent_msg.message_id
-            save_db(db); bot.send_message(uid, "✅ پیامت با موفقیت در سایه‌ها منتقل شد.")
+            try:
+                sent_msg = bot.send_message(target_uid, f"💌 **پاسخی جدید در خلوتگاه تو طنین‌انداز شد:**\n\n{text}\n\n➖➖➖➖➖➖\n💡 می‌تونی با ریپلای کردن، ادامه بدی.")
+                db["users"][target_uid]["last_anon_msg_id"] = sent_msg.message_id
+                save_db(db); bot.send_message(uid, "✅ پیامت منتقل شد.")
+            except: bot.send_message(uid, "🎭 ارتباط قطع شده...")
             return
 
+    # منوی اصلی
     if text == "🛰 شکار هم‌صحبت":
         btn = types.InlineKeyboardMarkup()
         btn.add(types.InlineKeyboardButton("شوالیه‌ها 👦", callback_data="hunt_m"), types.InlineKeyboardButton("بانوها 👧", callback_data="hunt_f"))
         btn.add(types.InlineKeyboardButton("هر کسی که شد 🌈", callback_data="hunt_a"))
-        bot.send_message(uid, "🔍 دنبال چه کسی می‌گردی؟", reply_markup=btn)
+        bot.send_message(uid, "🔍 دنبال چه کسی می‌گردی؟ رادارهای محفل رو روشن کردم...", reply_markup=btn)
     elif text == "🤫 ایستگاه اعتراف":
         link = user.get("link") or str(random.randint(111111, 999999))
         db["users"][uid]["link"] = link; save_db(db)
-        bot.send_message(uid, f"🎭 لینکِ اعترافات ناشناس تو آماده‌ست! بزارش توی بیو:\n\nhttps://t.me/{bot.get_me().username}?start={link}")
+        bot.send_message(uid, f"🎭 لینکِ اعترافات ناشناس تو آماده‌ست! بزارش توی بیو تا بقیه برات بنویسن:\n\nhttps://t.me/{bot.get_me().username}?start={link}")
     elif text == "🎈 ویترین من":
         sex = "شوالیه 👦" if user.get("gender") == "male" else "بانو 👧"
         bot.send_message(uid, f"📜 **کتیبه هویت تو:**\n\n👤 نام مستعار: {user['name']}\n🎭 جنسیت: {sex}\n🎂 سن: {user.get('age', 'نامعلوم')}")
     elif text == "📖 داستان محفل":
-        bot.send_message(uid, "🕯 محفل سایه‌ها جایی برای گفتگوهای بدون نقابه. اینجا هویت تو مخفیه تا بتونی بلندترین فریادهای دلت رو به صورت ناشناس به گوش بقیه برسونی.")
+        bot.send_message(uid, "🕯 محفل سایه‌ها جایی برای گفتگوهای بدون نقابه. اینجا هویت تو مخفیه تا بتونی بلندترین فریادهای دلت رو به گوش بقیه برسونی.")
     elif text == "📢 طنین مدیریت" and uid == OWNER_ID:
         db["users"][uid]["state"] = "admin_bc"; save_db(db)
-        bot.send_message(uid, "📢 پیامی که می‌خوای در کل تالار طنین‌انداز بشه رو بنویس:", reply_markup=types.ReplyKeyboardRemove())
+        bot.send_message(uid, "📢 پیامی که می‌خوای در کل تالار پخش بشه رو بنویس:")
     elif user.get("state") == "admin_bc" and uid == OWNER_ID:
         db["users"][uid]["state"] = "main"; save_db(db)
         for u in db["users"]:
-            try: bot.send_message(u, f"📢 **طنین مدیریت در محفل:**\n\n{text}")
+            try: bot.send_message(u, f"📢 **طنین مدیریت:**\n\n{text}")
             except: pass
-        bot.send_message(uid, "✅ پیام با موفقیت طنین‌انداز شد.", reply_markup=main_menu(uid))
+        bot.send_message(uid, "✅ طنین‌انداز شد.", reply_markup=main_menu(uid))
 
 @bot.callback_query_handler(func=lambda c: True)
 def callbacks(call):
@@ -188,59 +204,63 @@ def callbacks(call):
     if call.data == "manage_banned" and uid == OWNER_ID:
         if not db["banned"]: bot.answer_callback_query(call.id, "لیست سیاه خالی است."); return
         btn = types.InlineKeyboardMarkup()
-        for b_id in db["banned"]:
-            u_name = db["users"].get(b_id, {}).get("name", "نامعلوم")
-            btn.add(types.InlineKeyboardButton(f"🔓 بخشش {u_name} ({b_id})", callback_data=f"unban_{b_id}"))
-        bot.send_message(uid, "🚫 **لیست سیاه محفل:**", reply_markup=btn)
+        for b_id in db["banned"]: btn.add(types.InlineKeyboardButton(f"🔓 بخشش {b_id}", callback_data=f"unban_{b_id}"))
+        bot.send_message(uid, "🚫 لیست سیاه محفل:", reply_markup=btn)
 
     elif call.data.startswith("unban_"):
         target = call.data.split("_")[1]
         if target in db["banned"]: db["banned"].remove(target); save_db(db)
-        bot.edit_message_text(f"✅ کاربر {target} بخشیده شد.", uid, call.message.id)
+        bot.edit_message_text(f"✅ {target} به محفل برگشت.", uid, call.message.id)
 
     elif call.data == "get_db_file" and uid == OWNER_ID:
         if os.path.exists(DB_PATH):
             with open(DB_PATH, "rb") as f: bot.send_document(uid, f, caption="📂 دیتابیس کامل محفل.")
 
     elif call.data == "verify_join":
-        if check_sub(uid): bot.delete_message(uid, call.message.id); bot.send_message(uid, "🔓 درهای تالار باز شد! خوش آمدی.", reply_markup=main_menu(uid))
+        if check_sub(uid): bot.delete_message(uid, call.message.id); bot.send_message(uid, "🔓 خوش آمدی مسافر.", reply_markup=main_menu(uid))
 
     elif call.data.startswith("set_"):
         db["users"][uid].update({"gender": "male" if "m" in call.data else "female", "state": "reg_age"})
         save_db(db); bot.delete_message(uid, call.message.id)
-        bot.send_message(uid, "🕯 حالا سن خودت رو به عدد برای کتیبه بفرست:")
+        bot.send_message(uid, "🕯 حالا سن خودت رو به عدد بفرست:")
 
     elif call.data == "send_conf":
         target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
         try:
-            sent_msg = bot.send_message(target, f"📬 **یه رازِ ناشناس برای تو رسید:**\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.")
+            sent_msg = bot.send_message(target, f"📬 **یه رازِ ناشناس برای تو رسید:**\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، ریپلای کن.")
             db["users"][target]["last_anon_msg_id"] = sent_msg.message_id
             save_db(db); db["users"][uid]["state"] = "main"; save_db(db)
             bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
             bot.send_message(uid, "🏡 بازگشت به منوی اصلی", reply_markup=main_menu(uid))
-        except: bot.send_message(uid, "🎭 ارسال نشد، راه مسدود است.")
+        except: bot.send_message(uid, "🎭 ارسال نشد.")
+
+    elif call.data == "cancel_conf":
+        db["users"][uid]["state"] = "main"; save_db(db)
+        bot.edit_message_text("❌ منصرف شدی. پیام پاک شد.", uid, call.message.id)
+        bot.send_message(uid, "🏡 منوی اصلی", reply_markup=main_menu(uid))
 
     elif call.data.startswith("hunt_"):
         pref = call.data.split("_")[1]
         pref_key = "male" if pref == "m" else ("female" if pref == "f" else "any")
         bot.edit_message_text("🔍 در حال جستجوی روحی سرگردان در اعماق محفل...", uid, call.message.id)
-        for k in db["queue"]:
+        for k in ["male", "female", "any"]:
             if uid in db["queue"][k]: db["queue"][k].remove(uid)
         
-        target_pool = db["queue"]["male"] if pref_key == "male" else (db["queue"]["female"] if pref_key == "female" else (db["queue"]["male"] + db["queue"]["female"]))
-        match = next((u for u in target_pool if u != uid), None)
+        # پیدا کردن کسی که دنبال جنسیت من میگرده
+        my_gender = db["users"][uid].get("gender")
+        target_pool = db["queue"][my_gender] + db["queue"]["any"]
+        match = next((u for u in target_pool if u != uid and (pref_key == "any" or db["users"][u]["gender"] == pref_key)), None)
         
         if match:
-            for k in db["queue"]:
+            for k in ["male", "female", "any"]:
                 if match in db["queue"][k]: db["queue"][k].remove(match)
             db["users"][uid].update({"state": "in_chat", "partner": match})
             db["users"][match].update({"state": "in_chat", "partner": uid})
             save_db(db)
-            bot.send_message(uid, "💎 فرکانس‌ها هماهنگ شد! گپ رو شروع کن!", reply_markup=chat_menu())
-            bot.send_message(match, "💎 فرکانس‌ها هماهنگ شد! گپ رو شروع کن!", reply_markup=chat_menu())
+            bot.send_message(uid, "💎 فرکانس‌ها هماهنگ شد! به هم وصل شدید.", reply_markup=chat_menu())
+            bot.send_message(match, "💎 فرکانس‌ها هماهنگ شد! به هم وصل شدید.", reply_markup=chat_menu())
         else:
-            my_sex = db["users"][uid].get("gender")
-            db["queue"][pref_key if pref_key != "any" else my_sex].append(uid)
+            db["queue"][pref_key].append(uid)
             save_db(db)
             bot.send_message(uid, "🕯 کسی پیدا نشد، در صف انتظار ماندی...", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("لغو جستجو ❌", callback_data="cancel_search")))
 
@@ -254,20 +274,12 @@ def callbacks(call):
 
     elif call.data.startswith("report_"):
         reason = call.data.replace("report_", "")
-        if "لغو" in reason: bot.edit_message_text("🕯 گپ رو ادامه بده.", uid, call.message.id)
-        else:
-            partner = db["users"][uid].get("partner")
-            chat_id = f"{min(uid, partner)}_{max(uid, partner)}"
-            history = "\n".join(db.get("chat_history", {}).get(chat_id, ["تاریخچه‌ای یافت نشد."]))
-            report_msg = f"🚩 **گزارش تخلف**\n\n👤 شاکی: `{uid}`\n👤 متهم: `{partner}`\n📂 دلیل: {reason}\n\n📝 **۱۰ پیام آخر (با آیدی):**\n{history}"
-            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚫 BAN", callback_data=f"adminban_{partner}"), types.InlineKeyboardButton("✅ نادیده گرفتن", callback_data="adminignore"))
-            bot.send_message(OWNER_ID, report_msg, reply_markup=btn)
-            bot.edit_message_text("✅ گزارش ارسال شد.", uid, call.message.id)
-
-    elif call.data.startswith("adminban_"):
-        target = call.data.split("_")[1]
-        if target not in db["banned"]: db["banned"].append(target); save_db(db)
-        bot.answer_callback_query(call.id, "کاربر مسدود شد.")
+        partner = db["users"][uid].get("partner")
+        chat_id = f"{min(uid, partner)}_{max(uid, partner)}"
+        history = "\n".join(db.get("chat_history", {}).get(chat_id, ["تاریخچه‌ای نیست."]))
+        bot.send_message(OWNER_ID, f"🚩 **گزارش**\nشاکی: `{uid}`\nمتهم: `{partner}`\nدلیل: {reason}\n\n📝 **پیام‌ها:**\n{history}", 
+                         reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🚫 BAN", callback_data=f"adminban_{partner}")))
+        bot.edit_message_text("✅ گزارش ارسال شد.", uid, call.message.id)
 
 if __name__ == "__main__":
     keep_alive(); bot.infinity_polling()
