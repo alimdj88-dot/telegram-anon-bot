@@ -73,7 +73,7 @@ def handle_messages(message):
         bot.send_message(uid, "✨ مسافر عزیز! برای ورود به تالار اصلی محفل، ابتدا باید در کانال ما حضور داشته باشی. منتظرت هستیم...", reply_markup=btn)
         return
 
-    # --- بخش مدیریت (برگشت به حالت اول) ---
+    # --- بخش مدیریت ---
     if uid == OWNER_ID and text == "📊 آمار و دیتابیس":
         m = sum(1 for u in db["users"].values() if u.get("gender") == "male")
         f = sum(1 for u in db["users"].values() if u.get("gender") == "female")
@@ -85,38 +85,38 @@ def handle_messages(message):
         return
 
     if text == "📢 طنین مدیریت" and uid == OWNER_ID:
-        db["users"][uid]["state"] = "admin_bc"; save_db(db)
+        db["users"][uid]["state"] = "admin_bc"
+        save_db(db)
         bot.send_message(uid, "📢 پیامی که می‌خوای در کل تالار پخش بشه رو بنویس:", reply_markup=types.ReplyKeyboardRemove())
         return
 
     if uid in db["users"] and db["users"][uid].get("state") == "admin_bc" and uid == OWNER_ID:
-        db["users"][uid]["state"] = "main"; save_db(db)
+        db["users"][uid]["state"] = "main"
+        save_db(db)
         for u in db["users"]:
             try: bot.send_message(u, f"📢 **طنین مدیریت در محفل:**\n\n{text}")
             except: pass
         bot.send_message(uid, "✅ پیام با موفقیت طنین‌انداز شد.", reply_markup=main_menu(uid))
         return
 
-    # --- بخش ریپلای هوشمند ---
+    # --- بخش ریپلای با تاییدیه ---
     if message.reply_to_message:
         target_uid = None
         for u_id, u_data in db["users"].items():
             if u_id != uid and u_data.get("last_anon_msg_id") == message.reply_to_message.message_id:
                 target_uid = u_id
                 break
-        
         if target_uid:
-            try:
-                bot.send_message(target_uid, "💬 **پاسخی در سایه‌ها:**")
-                sent_msg = bot.copy_message(target_uid, uid, message.message_id)
-                db["users"][target_uid]["last_anon_msg_id"] = sent_msg.message_id
-                save_db(db)
-                bot.send_message(uid, "✅ پیامت با موفقیت در سایه‌ها منتقل شد.")
-                return
-            except:
-                bot.send_message(uid, "🎭 متاسفانه ارتباط در سایه‌ها قطع شده است.")
-                return
+            db["users"][uid].update({"state": "confirm_reply", "temp_reply_target": target_uid, "temp_reply_msg": message.message_id})
+            save_db(db)
+            btn = types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton("بفرست بره 🚀", callback_data="send_reply_ok"),
+                types.InlineKeyboardButton("پشیمون شدم ❌", callback_data="cancel_reply")
+            )
+            bot.send_message(uid, "🕯 مسافر عزیز، آیا مطمئنی می‌خوای این پاسخ رو در دلِ سایه‌ها برای صاحب راز بفرستی؟", reply_to_message_id=message.message_id, reply_markup=btn)
+            return
 
+    # --- بقیه منطق‌ها (بدون تغییر) ---
     if text and text.startswith("/start"):
         if uid in db["users"] and db["users"][uid].get("state") == "in_chat":
             bot.send_message(uid, "🕯 شما در اعماق یک گفتگو هستید. برای بازگشت به تالار، ابتدا رشته اتصال را قطع کنید.")
@@ -213,7 +213,6 @@ def callbacks(call):
         sender_id = call.data.split("_")[2]
         msg_text = db["anon_msgs"].get(call.data)
         if msg_text:
-            # ثبت آیدی پیام برای فعال شدن ریپلای
             db["users"][uid]["last_anon_msg_id"] = call.message.id; save_db(db)
             bot.edit_message_text(f"📬 **یه رازِ ناشناس:**\n\n{msg_text}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.", uid, call.message.id)
             bot.send_message(sender_id, "👁‍🗨 قاصدک تو به مقصد رسید و توسط صاحب راز رویت شد.")
@@ -221,20 +220,36 @@ def callbacks(call):
 
     elif call.data == "send_conf":
         target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
+        mkey = f"view_msg_{uid}_{random.randint(1000,9999)}"
+        db["anon_msgs"][mkey] = msg; db["users"][uid]["state"] = "main"; save_db(db)
+        btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👁 مشاهده پیام", callback_data=mkey))
+        bot.send_message(target, "📬 **یک پیام ناشناس جدید در سایه‌ها منتظر توست...**", reply_markup=btn)
+        bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
+        bot.send_message(uid, "🏡 بازگشت به منو", reply_markup=main_menu(uid))
+
+    elif call.data == "send_reply_ok":
+        t_uid = db["users"][uid].get("temp_reply_target")
+        msg_id = db["users"][uid].get("temp_reply_msg")
         try:
-            msg_key = f"view_msg_{uid}_{random.randint(1000,9999)}"
-            db["anon_msgs"][msg_key] = msg
-            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👁 مشاهده پیام", callback_data=msg_key))
-            bot.send_message(target, "📬 **یک پیام ناشناس جدید در سایه‌ها منتظر توست...**", reply_markup=btn)
+            bot.send_message(t_uid, "💬 **پاسخی در سایه‌ها:**")
+            sent = bot.copy_message(t_uid, uid, msg_id)
+            db["users"][t_uid]["last_anon_msg_id"] = sent.message_id
             db["users"][uid]["state"] = "main"; save_db(db)
-            bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
-            bot.send_message(uid, "🏡 بازگشت به منو", reply_markup=main_menu(uid))
-        except: bot.send_message(uid, "🎭 نشد برسونم...")
+            bot.edit_message_text("✅ پاسخ تو در سایه‌ها رها شد و به مقصد رسید.", uid, call.message.id)
+        except: bot.send_message(uid, "🎭 متاسفانه ارتباط در سایه‌ها قطع شده است.")
+
+    elif call.data == "cancel_reply":
+        db["users"][uid]["state"] = "main"; save_db(db)
+        bot.edit_message_text("❌ منصرف شدی و پاسخ را در گلو خفه کردی.", uid, call.message.id)
+
+    elif call.data.startswith("report_"):
+        reason = call.data.split("_")[1]; partner = db["users"][uid].get("partner")
+        bot.send_message(OWNER_ID, f"🚩 گزارش تخلف\nشاکی: {uid}\nمتهم: {partner}\nدلیل: {reason}")
+        bot.edit_message_text("✅ گزارش تو توسط نگهبان‌ها دریافت شد.", uid, call.message.id)
 
     elif call.data == "get_db_file" and uid == OWNER_ID:
         if os.path.exists(DB_PATH):
             with open(DB_PATH, "rb") as f: bot.send_document(uid, f, caption="📂 دیتابیس کامل محفل.")
-        else: bot.answer_callback_query(call.id, "❌ فایل پیدا نشد.")
 
     elif call.data == "manage_banned" and uid == OWNER_ID:
         if not db["banned"]: bot.answer_callback_query(call.id, "لیست سیاه خالی است."); return
@@ -258,8 +273,7 @@ def callbacks(call):
         bot.send_message(uid, "🏡", reply_markup=main_menu(uid))
 
     elif call.data.startswith("hunt_"):
-        pref = call.data.split("_")[1]
-        pref_key = "male" if pref == "m" else ("female" if pref == "f" else "any")
+        pref = call.data.split("_")[1]; pref_key = "male" if pref == "m" else ("female" if pref == "f" else "any")
         bot.edit_message_text("🔍 در حال جستجوی یک روح سرگردان...", uid, call.message.id)
         for k in ["male", "female", "any"]:
             if uid in db["queue"][k]: db["queue"][k].remove(uid)
@@ -270,31 +284,27 @@ def callbacks(call):
             for k in ["male", "female", "any"]:
                 if match in db["queue"][k]: db["queue"][k].remove(match)
             db["users"][uid].update({"state": "in_chat", "partner": match})
-            db["users"][match].update({"state": "in_chat", "partner": uid})
-            save_db(db)
+            db["users"][match].update({"state": "in_chat", "partner": uid}); save_db(db)
             bot.send_message(uid, "💎 وصل شدی! گپ رو شروع کن.", reply_markup=chat_menu())
             bot.send_message(match, "💎 وصل شدی! گپ رو شروع کن.", reply_markup=chat_menu())
         else:
             db["queue"][pref_key].append(uid); save_db(db)
             bot.send_message(uid, "🕯 کسی پیدا نشد، در صف ماندی...", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("لغو جستجو ❌", callback_data="cancel_search")))
 
-    elif call.data == "cancel_search":
-        for k in ["male", "female", "any"]:
-            if uid in db["queue"][k]: db["queue"][k].remove(uid)
-        save_db(db); bot.edit_message_text("❌ لغو شد.", uid, call.message.id)
-        bot.send_message(uid, "🏡", reply_markup=main_menu(uid))
-
     elif call.data == "confirm_end":
         p = db["users"][uid].get("partner")
         db["users"][uid].update({"state": "main", "partner": None})
-        db["users"][p].update({"state": "main", "partner": None})
-        save_db(db)
+        db["users"][p].update({"state": "main", "partner": None}); save_db(db)
         bot.send_message(uid, "رشته اتصال پاره شد.", reply_markup=main_menu(uid))
         bot.send_message(p, "طرف مقابل چت رو تموم کرد.", reply_markup=main_menu(p))
 
     elif call.data == "cancel_end":
-        bot.delete_message(uid, call.message.id)
-        bot.send_message(uid, "🕯 به گفتگو ادامه بده.")
+        bot.delete_message(uid, call.message.id); bot.send_message(uid, "🕯 به گفتگو ادامه بده.")
+
+    elif call.data == "cancel_search":
+        for k in ["male", "female", "any"]:
+            if uid in db["queue"][k]: db["queue"][k].remove(uid)
+        save_db(db); bot.edit_message_text("❌ لغو شد.", uid, call.message.id); bot.send_message(uid, "🏡", reply_markup=main_menu(uid))
 
 if __name__ == "__main__":
     keep_alive(); bot.infinity_polling()
