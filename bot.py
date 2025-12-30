@@ -127,28 +127,26 @@ def handle_messages(message):
     user = db["users"].get(uid)
     if not user: return
 
-    # اصلاح بخش پاسخ به پیام ناشناس (رفع ۱۰۰٪ مشکل ارسال نشدن جواب)
+    # --- بخش اصلاح شده پاسخ و مشاهده پیام ---
     if message.reply_to_message:
         target_uid = None
         for u_id, u_data in db["users"].items():
-            if u_data.get("last_anon_msg_id") == message.reply_to_message.message_id:
+            if u_id != uid and u_data.get("last_anon_msg_id") == message.reply_to_message.message_id:
                 target_uid = u_id
                 break
         
         if target_uid:
             try:
-                # کپی کردن هر نوع محتوایی (متن، عکس و ...) به طرف مقابل
+                bot.send_message(target_uid, "💬 **پاسخی در سایه‌ها:**")
                 sent_msg = bot.copy_message(target_uid, uid, message.message_id)
-                
-                # نکته کلیدی: آیدی پیام جدید رو برای طرف مقابل ذخیره میکنیم تا اونم بتونه ریپلای کنه
                 db["users"][target_uid]["last_anon_msg_id"] = sent_msg.message_id
                 save_db(db)
-                
                 bot.send_message(uid, "✅ پیامت با موفقیت در سایه‌ها منتقل شد.")
                 return
             except:
-                bot.send_message(uid, "🎭 متاسفانه ارتباط در سایه‌ها قطع شده یا طرف مقابل ربات رو مسدود کرده.")
+                bot.send_message(uid, "🎭 متاسفانه ارتباط قطع شده است.")
                 return
+    # ----------------------------------------
 
     if user.get("state") == "in_chat":
         partner = user.get("partner")
@@ -247,11 +245,12 @@ def callbacks(call):
     elif call.data == "send_conf":
         target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
         try:
-            # ارسال پیام اولیه اعتراف و ذخیره آیدی آن برای شروع گفتگو
             sent = bot.send_message(target, f"📬 **یه رازِ ناشناس برای تو رسید:**\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.")
             db["users"][target]["last_anon_msg_id"] = sent.message_id
             db["users"][uid]["state"] = "main"; save_db(db)
             bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
+            # اعلام مشاهده پیام به فرستنده
+            bot.send_message(uid, "👁‍🗨 قاصدک تو به مقصد رسید و توسط صاحب راز رویت شد.")
             bot.send_message(uid, "🏡 بازگشت به منو", reply_markup=main_menu(uid))
         except: bot.send_message(uid, "🎭 نشد برسونم...")
 
