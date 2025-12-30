@@ -127,7 +127,7 @@ def handle_messages(message):
     user = db["users"].get(uid)
     if not user: return
 
-    # پاسخ به پیام ناشناس (رفع باگ ارسال)
+    # اصلاح بخش پاسخ به پیام ناشناس (رفع ۱۰۰٪ مشکل ارسال نشدن جواب)
     if message.reply_to_message:
         target_uid = None
         for u_id, u_data in db["users"].items():
@@ -137,13 +137,17 @@ def handle_messages(message):
         
         if target_uid:
             try:
-                sent_msg = bot.send_message(target_uid, f"💌 **پاسخی جدید در خلوتگاه تو طنین‌انداز شد:**\n\n{text}\n\n➖➖➖➖➖➖\n💡 می‌تونی با ریپلای کردن، این گفتگو رو ادامه بدی.")
+                # کپی کردن هر نوع محتوایی (متن، عکس و ...) به طرف مقابل
+                sent_msg = bot.copy_message(target_uid, uid, message.message_id)
+                
+                # نکته کلیدی: آیدی پیام جدید رو برای طرف مقابل ذخیره میکنیم تا اونم بتونه ریپلای کنه
                 db["users"][target_uid]["last_anon_msg_id"] = sent_msg.message_id
                 save_db(db)
+                
                 bot.send_message(uid, "✅ پیامت با موفقیت در سایه‌ها منتقل شد.")
                 return
             except:
-                bot.send_message(uid, "🎭 متاسفانه ارتباط در سایه‌ها قطع شده...")
+                bot.send_message(uid, "🎭 متاسفانه ارتباط در سایه‌ها قطع شده یا طرف مقابل ربات رو مسدود کرده.")
                 return
 
     if user.get("state") == "in_chat":
@@ -243,6 +247,7 @@ def callbacks(call):
     elif call.data == "send_conf":
         target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
         try:
+            # ارسال پیام اولیه اعتراف و ذخیره آیدی آن برای شروع گفتگو
             sent = bot.send_message(target, f"📬 **یه رازِ ناشناس برای تو رسید:**\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.")
             db["users"][target]["last_anon_msg_id"] = sent.message_id
             db["users"][uid]["state"] = "main"; save_db(db)
