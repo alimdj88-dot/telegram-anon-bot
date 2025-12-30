@@ -19,7 +19,7 @@ DB_PATH = "shadow_data.json"
 
 def get_db():
     if not os.path.exists(DB_PATH): 
-        db = {"users": {}, "queue": {"male": [], "female": [], "any": []}, "banned": [], "chat_history": {}}
+        db = {"users": {}, "queue": {"male": [], "female": [], "any": []}, "banned": [], "chat_history": {}, "anon_msgs": {}}
         save_db(db)
         return db
     with open(DB_PATH, "r", encoding="utf-8") as f:
@@ -28,8 +28,9 @@ def get_db():
             if "banned" not in data: data["banned"] = []
             if "chat_history" not in data: data["chat_history"] = {}
             if "queue" not in data: data["queue"] = {"male": [], "female": [], "any": []}
+            if "anon_msgs" not in data: data["anon_msgs"] = {}
             return data
-        except: return {"users": {}, "queue": {"male": [], "female": [], "any": []}, "banned": [], "chat_history": {}}
+        except: return {"users": {}, "queue": {"male": [], "female": [], "any": []}, "banned": [], "chat_history": {}, "anon_msgs": {}}
 
 def save_db(db):
     with open(DB_PATH, "w", encoding="utf-8") as f:
@@ -127,9 +128,10 @@ def handle_messages(message):
     user = db["users"].get(uid)
     if not user: return
 
-    # --- بخش اصلاح شده پاسخ و مشاهده پیام ---
+    # --- منطق اصلاح شده پاسخ به ناشناس ---
     if message.reply_to_message:
         target_uid = None
+        # جستجو در دیتابیس برای پیدا کردن صاحب پیامی که به آن ریپلای شده
         for u_id, u_data in db["users"].items():
             if u_id != uid and u_data.get("last_anon_msg_id") == message.reply_to_message.message_id:
                 target_uid = u_id
@@ -146,7 +148,6 @@ def handle_messages(message):
             except:
                 bot.send_message(uid, "🎭 متاسفانه ارتباط قطع شده است.")
                 return
-    # ----------------------------------------
 
     if user.get("state") == "in_chat":
         partner = user.get("partner")
@@ -212,6 +213,32 @@ def callbacks(call):
             bot.send_message(uid, "🔓 درهای تالار باز شد! خوش آمدی.", reply_markup=main_menu(uid))
         else: bot.answer_callback_query(call.id, "❌ هنوز عضو کانال نشدی مسافر!", show_alert=True)
 
+    # --- منطق دکمه مشاهده پیام ---
+    elif call.data.startswith("view_msg_"):
+        sender_id = call.data.split("_")[2]
+        msg_text = db["anon_msgs"].get(call.data)
+        if msg_text:
+            bot.edit_message_text(f"📬 **یه رازِ ناشناس:**\n\n{msg_text}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.", uid, call.message.id)
+            # اعلام به فرستنده
+            bot.send_message(sender_id, "👁‍🗨 قاصدک تو به مقصد رسید و توسط صاحب راز رویت شد.")
+            # ذخیره آیدی پیام برای سیستم ریپلای
+            db["users"][uid]["last_anon_msg_id"] = call.message.id
+            save_db(db)
+        else:
+            bot.answer_callback_query(call.id, "🎭 این راز قدیمی شده و دیگر در سایه‌ها نیست.")
+
+    elif call.data == "send_conf":
+        target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
+        try:
+            msg_id_key = f"view_msg_{uid}_{random.randint(1000,9999)}"
+            db["anon_msgs"][msg_id_key] = msg
+            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("👁 مشاهده پیام", callback_data=msg_id_key))
+            bot.send_message(target, "📬 **یک پیام ناشناس جدید در سایه‌ها منتظر توست...**", reply_markup=btn)
+            db["users"][uid]["state"] = "main"; save_db(db)
+            bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
+            bot.send_message(uid, "🏡 بازگشت به منو", reply_markup=main_menu(uid))
+        except: bot.send_message(uid, "🎭 نشد برسونم...")
+
     elif call.data == "get_db_file" and uid == OWNER_ID:
         if os.path.exists(DB_PATH):
             with open(DB_PATH, "rb") as f:
@@ -241,18 +268,6 @@ def callbacks(call):
         db["users"][uid].update({"gender": "male" if "m" in call.data else "female", "state": "reg_age"})
         save_db(db); bot.delete_message(uid, call.message.id)
         bot.send_message(uid, "🕯 حالا سن خودت رو به عدد برای کتیبه بفرست:")
-
-    elif call.data == "send_conf":
-        target = db["users"][uid].get("target"); msg = db["users"][uid].get("temp_msg")
-        try:
-            sent = bot.send_message(target, f"📬 **یه رازِ ناشناس برای تو رسید:**\n\n{msg}\n\n➖➖➖➖➖➖\n💡 برای جواب دادن، روی همین پیام ریپلای کن.")
-            db["users"][target]["last_anon_msg_id"] = sent.message_id
-            db["users"][uid]["state"] = "main"; save_db(db)
-            bot.edit_message_text("✅ قاصدک تو به مقصد رسید!", uid, call.message.id)
-            # اعلام مشاهده پیام به فرستنده
-            bot.send_message(uid, "👁‍🗨 قاصدک تو به مقصد رسید و توسط صاحب راز رویت شد.")
-            bot.send_message(uid, "🏡 بازگشت به منو", reply_markup=main_menu(uid))
-        except: bot.send_message(uid, "🎭 نشد برسونم...")
 
     elif call.data == "cancel_conf":
         db["users"][uid]["state"] = "main"; save_db(db)
