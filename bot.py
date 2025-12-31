@@ -4,21 +4,21 @@ import json, os, random, datetime, re, time
 from flask import Flask
 from threading import Thread
 
-# --- سامانه پایداری و میزبانی ---
+# --- سامانه پایداری و Keep Alive ---
 app = Flask('')
 @app.route('/')
-def home(): return "Shadow Chat Bot is active."
+def home(): return "Shadow Chat Bot is Online and Operating."
 def run(): app.run(host='0.0.0.0', port=8080)
 def keep_alive(): Thread(target=run).start()
 
-# --- تنظیمات و دیتابیس ---
+# --- پیکربندی اصلی ---
 API_TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
 OWNER_ID = "8013245091" 
 CHANNEL_ID = "@ChatNaAnnouncements"
 bot = telebot.TeleBot(API_TOKEN)
 DB_PATH = "shadow_data.json"
 
-BAD_WORDS = ["مادرجنده", "کص ننت", "کون", "کص", "کیر", "جنده", "ناموس", "بی‌ناموس", "کونی", "جنده‌خونه", "لاشی", "خایه"] 
+BAD_WORDS = ["مادرجنده", "کص ننت", "کون", "کص", "کیر", "جنده", "ناموس", "بی‌ناموس", "کونی", "لاشی"] 
 user_last_msg_time = {}
 
 def get_db():
@@ -68,35 +68,21 @@ def chat_menu():
     markup.add("🚫 بلاک کردن کاربر")
     return markup
 
-# --- پردازشگر اصلی پیام‌ها ---
+# --- هندلر اصلی پیام‌ها ---
 @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
 def handle_messages(message):
     uid = str(message.chat.id)
     db = get_db()
     
-    # ۱. فیلتر مسدودیت
+    # ۱. فیلتر مسدودیت (بررسی دائمی یا زمانی)
     if uid in db.get("banned", {}):
         expire = db["banned"][uid]['end']
         if expire == "perm" or datetime.datetime.now() < datetime.datetime.fromisoformat(expire):
-            bot.send_message(uid, "🚫 **دسترسی شما قطع شده است!**\nحساب کاربری شما به دلیل رعایت نکردن قوانین مسدود می‌باشد.")
+            bot.send_message(uid, "🚫 **دسترسی شما قطع شده است!**\nحساب کاربری شما به دلیل رعایت نکردن قوانین مسدود می‌باشد. اگر فکر می‌کنید اشتباهی رخ داده با پشتیبانی در ارتباط باشید.")
             return
 
-    # ۲. عضویت اجباری
-    if not check_sub(uid):
-        btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("عضویت در کانال خبررسانی 📢", url=f"https://t.me/{CHANNEL_ID[1:]}"))
-        bot.send_message(uid, "👋 **خوش آمدی همسفر!**\nبرای استفاده از قابلیت‌های چت و پیام ناشناس، ابتدا در کانال ما عضو شو و سپس مجدد تلاش کن:", reply_markup=btn)
-        return
-
-    # ۳. ضد اسپم هوشمند
-    now = time.time()
-    if uid in user_last_msg_time and now - user_last_msg_time[uid] < 0.8:
-        bot.send_message(uid, "⚠️ **آرام‌تر!** ربات برای پردازش دقیق نیاز به زمان دارد. لطفاً پیام‌ها را پشت سر هم ارسال نکنید.")
-        return
-    user_last_msg_time[uid] = now
-
+    # ۲. اولویت ادمین (رفع باگ قفل شدن در وضعیت بن موقت)
     user = db["users"].get(uid)
-
-    # ۴. رفع باگ بن موقت (اولویت ادمین برای جلوگیری از قفل شدن)
     if uid == OWNER_ID and user and user.get("state") == "waiting_ban_time":
         if message.text and message.text.isdigit():
             target = user.get("temp_target")
@@ -104,39 +90,52 @@ def handle_messages(message):
             db["banned"][target] = {"end": expire, "reason": "تخلف گزارش شده"}
             db["users"][uid]["state"] = "main"
             save_db(db)
-            bot.send_message(uid, f"✅ کاربر {target} برای {message.text} دقیقه مسدود شد.", reply_markup=main_menu(uid))
-            try: bot.send_message(target, f"⏳ حساب شما برای {message.text} دقیقه مسدود شد.")
+            bot.send_message(uid, f"✅ کاربر {target} با موفقیت برای {message.text} دقیقه مسدود شد.", reply_markup=main_menu(uid))
+            try: bot.send_message(target, f"⏳ **حساب کاربری شما به مدت {message.text} دقیقه مسدود شد.**")
             except: pass
             return
-        elif message.text: # اگر دکمه زد یا متن فرستاد و عدد نبود
+        elif message.text: # اگر عدد نبود، وضعیت را ریست کن تا ربات از باگ خارج شود
             db["users"][uid]["state"] = "main"; save_db(db)
 
-    # ۵. استارت و ورودی‌های لینک پیام ناشناس
+    # ۳. فیلتر عضویت اجباری
+    if not check_sub(uid):
+        btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("عضویت در کانال خبررسانی 📢", url=f"https://t.me/{CHANNEL_ID[1:]}"))
+        bot.send_message(uid, "👋 **خوش آمدی همسفر!**\nبرای استفاده از قابلیت‌های چت و پیام ناشناس، ابتدا در کانال ما عضو شو و سپس مجدد تلاش کن:", reply_markup=btn)
+        return
+
+    # ۴. ضد اسپم
+    now = time.time()
+    if uid in user_last_msg_time and now - user_last_msg_time[uid] < 0.8:
+        bot.send_message(uid, "⚠️ **آرام‌تر!** لطفاً پیام‌ها را با کمی فاصله ارسال کنید.")
+        return
+    user_last_msg_time[uid] = now
+
+    # ۵. ورود و استارت با لینک
     if message.text and message.text.startswith("/start"):
         args = message.text.split()
         if len(args) == 1:
             if uid not in db["users"] or "name" not in db["users"][uid]:
                 db["users"][uid] = {"state": "reg_name"}
                 save_db(db)
-                bot.send_message(uid, "✨ **سلام! به ایستگاه ناشناس خوش آمدی.**\nابتدا یک نام مستعار (حداکثر ۲۰ حرف) برای خودت انتخاب و ارسال کن:")
+                bot.send_message(uid, "✨ **سلام! به ایستگاه ناشناس خوش آمدی.**\nابتدا یک نام مستعار برای خودت انتخاب و ارسال کن:")
                 return
             db["users"][uid]["state"] = "main"; save_db(db)
-            bot.send_message(uid, "💎 **به خانه خوش آمدی!**\nاز منوی زیر یکی از گزینه‌ها را برای شروع انتخاب کن:", reply_markup=main_menu(uid))
+            bot.send_message(uid, "💎 **به خانه خوش آمدی!**\nگزینه مورد نظر خود را انتخاب کنید:", reply_markup=main_menu(uid))
             return
         else:
             code = args[1]
             target = next((u for u, d in db["users"].items() if d.get("link") == code), None)
-            if target == uid: bot.send_message(uid, "🙄 شما نمی‌توانید برای خودتان پیام ناشناس ارسال کنید!"); return
+            if target == uid: bot.send_message(uid, "🙄 **شوخی می‌کنی؟** نمی‌توانید به خودتان پیام بدهید!"); return
             if target:
                 db["users"][uid] = db["users"].get(uid, {"state": "main"})
                 db["users"][uid].update({"state": "writing_confession", "target": target})
                 save_db(db)
-                bot.send_message(uid, "📝 **در حال آماده‌سازی پیام برای یک ناشناس...**\nهر چه در دل داری بنویس، هویت تو مخفی می‌ماند:", reply_markup=types.ReplyKeyboardRemove())
+                bot.send_message(uid, "📝 **در حال آماده‌سازی پیام برای یک ناشناس...**\nهر چه در دل داری بنویس:", reply_markup=types.ReplyKeyboardRemove())
                 return
 
     if not user: return
 
-    # ۶. سیستم ریپلای ناشناس (با رفع باگ تاییدیه)
+    # ۶. سیستم ریپلای (رفع باگ و اضافه شدن تاییدیه)
     if message.reply_to_message:
         target_uid = next((u_id for u_id, u_data in db["users"].items() if u_id != uid and u_data.get("last_anon_msg_id") == message.reply_to_message.message_id), None)
         if target_uid:
@@ -154,33 +153,42 @@ def handle_messages(message):
         bot.send_message(uid, f"✨ **بسیار عالی، {message.text}!**\nحالا جنسیت خودت رو مشخص کن:", reply_markup=btn)
         return
     elif user["state"] == "reg_age":
-        if message.text and message.text.isdigit():
+        if message.text and message.text.isdigit() and 10 < int(message.text) < 95:
             db["users"][uid].update({"age": message.text, "state": "main"})
             save_db(db)
             bot.send_message(uid, "🎉 **تبریک! پروفایل تو تکمیل شد.**", reply_markup=main_menu(uid))
+            return
+        bot.send_message(uid, "❌ **سن نامعتبر!** عددی بین ۱۱ تا ۹۴ وارد کنید.")
         return
 
     # ۸. مدیریت چت زنده
     if user.get("state") == "in_chat":
         partner = user.get("partner")
         chat_id = f"{min(uid, partner)}_{max(uid, partner)}"
+        
         if message.text == "🚫 بلاک کردن کاربر":
             if uid not in db["blocks"]: db["blocks"][uid] = []
             db["blocks"][uid].append(partner)
             db["users"][uid].update({"state": "main", "partner": None}); db["users"][partner].update({"state": "main", "partner": None})
-            save_db(db); bot.send_message(uid, "🚫 کاربر بلاک شد.", reply_markup=main_menu(uid)); bot.send_message(partner, "⚠️ ارتباط قطع شد.", reply_markup=main_menu(partner))
+            save_db(db)
+            bot.send_message(uid, "🚫 **کاربر بلاک شد!**", reply_markup=main_menu(uid))
+            bot.send_message(partner, "⚠️ **طرف مقابل چت را ترک کرد.**", reply_markup=main_menu(partner))
             return
-        elif message.text == "❌ قطع چت":
-            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله 🔚", callback_data="confirm_end"), types.InlineKeyboardButton("خیر 🔙", callback_data="cancel_end"))
-            bot.send_message(uid, "🤔 مطمئنی؟", reply_markup=btn); return
-        elif message.text == "🚩 گزارش تخلف":
+            
+        if message.text == "❌ قطع چت":
+            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله، قطع کن 🔚", callback_data="confirm_end"), types.InlineKeyboardButton("خیر، ادامه بده 🔙", callback_data="cancel_end"))
+            bot.send_message(uid, "🤔 **مطمئنی می‌خوای این گفتگو رو تموم کنی؟**", reply_markup=btn)
+            return
+
+        if message.text == "🚩 گزارش تخلف":
             btn = types.InlineKeyboardMarkup()
             for r in ["فحش ناموسی 🤬", "تبلیغات", "مزاحمت"]: btn.add(types.InlineKeyboardButton(r, callback_data=f"rep_{r[:5]}"))
-            bot.send_message(uid, "🚩 علت گزارش:", reply_markup=btn); return
-        
+            bot.send_message(uid, "🚩 **علت گزارش خود را انتخاب کنید:**", reply_markup=btn)
+            return
+
         if message.text and is_bad(message.text):
             bot.delete_message(uid, message.message_id)
-            bot.send_message(uid, "⚠️ پیام شما حاوی کلمات نامناسب بود.")
+            bot.send_message(uid, "⚠️ **هشدار!** پیام شما حاوی کلمات نامناسب بود.")
             return
 
         if chat_id not in db["chat_history"]: db["chat_history"][chat_id] = []
@@ -196,33 +204,40 @@ def handle_messages(message):
     if message.text == "🛰 شروع چت ناشناس":
         btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("آقا 👦", callback_data="hunt_m"), types.InlineKeyboardButton("خانم 👧", callback_data="hunt_f")).add(types.InlineKeyboardButton("فرقی نمی‌کند 🌈", callback_data="hunt_a"))
         bot.send_message(uid, "🔍 **دنبال چه هم‌صحبتی می‌گردی؟**", reply_markup=btn)
+    
     elif message.text == "🤫 لینک پیام ناشناس":
         link = user.get("link") or str(random.randint(100000, 999999))
         db["users"][uid]["link"] = link; save_db(db)
-        bot.send_message(uid, f"🤫 **لینک اختصاصی تو ساخته شد!**\n`https://t.me/{bot.get_me().username}?start={link}`")
+        bot.send_message(uid, f"🤫 **لینک اختصاصی تو ساخته شد!**\n\n`https://t.me/{bot.get_me().username}?start={link}`")
+    
     elif message.text == "👤 پروفایل من":
         sex = "آقا 👦" if user.get("gender")=="male" else "خانم 👧"
-        bot.send_message(uid, f"👤 **مشخصات شما:**\n🏷 نام: {user['name']}\n👫 جنسیت: {sex}\n🆔 آیدی: `{uid}`")
+        bot.send_message(uid, f"👤 **مشخصات شما در ربات:**\n🏷 نام: {user['name']}\n👫 جنسیت: {sex}\n🆔 آیدی: `{uid}`")
+    
     elif message.text == "❓ راهنمای ربات":
-        bot.send_message(uid, "🛠 **راهنما:**\n۱. چت ناشناس: وصل شدن به افراد تصادفی\n۲. لینک ناشناس: دریافت پیام در صندوق مخفی")
-    elif message.text == "📊 مدیریت و آمار" and uid == OWNER_ID:
-        stats = f"📊 آمار:\n👥 کاربران: {len(db['users'])}\n⏳ در صف: {len(db['queue']['any'])}"
-        bot.send_message(uid, stats, reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("📥 دریافت دیتابیس", callback_data="get_db_file")))
-    elif message.text == "📢 ارسال همگانی" and uid == OWNER_ID:
-        db["users"][uid]["state"] = "admin_bc"; save_db(db)
-        bot.send_message(uid, "📝 متن اطلاعیه را بفرستید:", reply_markup=types.ReplyKeyboardRemove())
-    elif user.get("state") == "admin_bc" and uid == OWNER_ID:
-        db["users"][uid]["state"] = "main"; save_db(db)
-        for u in db["users"]:
-            try: bot.send_message(u, f"📢 **اطلاعیه:**\n\n{message.text}")
-            except: pass
-        bot.send_message(uid, "✅ ارسال شد.", reply_markup=main_menu(uid))
+        bot.send_message(uid, "❓ **راهنما:**\n۱. چت ناشناس: وصل شدن به افراد تصادفی\n۲. لینک ناشناس: دریافت پیام مخفی در صندوق شخصی")
 
-    # ۱۰. وضعیت نوشتن پیام ناشناس اولیه
+    # ۱۰. پنل ادمین
+    if uid == OWNER_ID:
+        if message.text == "📢 ارسال همگانی":
+            db["users"][uid]["state"] = "admin_bc"; save_db(db)
+            bot.send_message(uid, "📝 **متن اطلاعیه خود را بفرستید:**", reply_markup=types.ReplyKeyboardRemove())
+        elif user.get("state") == "admin_bc":
+            db["users"][uid]["state"] = "main"; save_db(db)
+            for u in db["users"]:
+                try: bot.send_message(u, f"📢 **اطلاعیه مدیریت:**\n\n{message.text}")
+                except: pass
+            bot.send_message(uid, "✅ ارسال شد.", reply_markup=main_menu(uid))
+        elif message.text == "📊 مدیریت و آمار":
+            stats = f"📊 **آمار:**\n👥 کاربران: {len(db['users'])}\n🚫 مسدودین: {len(db['banned'])}\n⏳ در صف: {len(db['queue']['any'])}"
+            btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("📥 دریافت دیتابیس", callback_data="get_db_file"))
+            bot.send_message(uid, stats, reply_markup=btn)
+
+    # ۱۱. نوشتن پیام ناشناس (رفع باگ تایید/لغو)
     elif user.get("state") == "writing_confession" and message.text:
         db["users"][uid].update({"temp_msg": message.text}); save_db(db)
         btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("ارسال قطعی 🚀", callback_data="send_conf"), types.InlineKeyboardButton("لغو ❌", callback_data="cancel_conf"))
-        bot.send_message(uid, f"✅ **پیش‌نمایش پیام:**\n\n{message.text}\n\nارسال شود؟", reply_markup=btn)
+        bot.send_message(uid, f"✅ **پیش‌نمایش پیام شما:**\n\n{message.text}\n\nآیا از ارسال آن اطمینان دارید؟", reply_markup=btn)
 
 @bot.callback_query_handler(func=lambda c: True)
 def callbacks(call):
@@ -249,8 +264,6 @@ def callbacks(call):
         if data:
             bot.edit_message_text(f"📩 **پیام ناشناس رسیده:**\n\n{data['m']}\n\n💡 برای پاسخ کافیست ریپلای کنید.", uid, call.message.id)
             db["users"][uid]["last_anon_msg_id"] = call.message.id; save_db(db)
-            try: bot.send_message(data['f'], "🔔 ناشناس پیام شما را مشاهده کرد.")
-            except: pass
 
     elif call.data.startswith("adm_p_"):
         target = call.data.split("_")[2]
@@ -260,17 +273,17 @@ def callbacks(call):
     elif call.data.startswith("adm_t_"):
         target = call.data.split("_")[2]
         db["users"][uid].update({"state": "waiting_ban_time", "temp_target": target}); save_db(db)
-        bot.send_message(uid, f"⏳ زمان بن (دقیقه) برای `{target}`:")
+        bot.send_message(uid, f"⏳ مدت زمان مسدودیت کاربر `{target}` را به **دقیقه** وارد کنید:")
 
     elif call.data.startswith("rep_"):
         reason = call.data.split("_")[1]; partner = db["users"][uid].get("partner")
         chat_id = f"{min(uid, partner)}_{max(uid, partner)}"
         history = db["chat_history"].get(chat_id, [])
-        report = f"🚩 گزارش تخلف\nدلیل: {reason}\nمتهم: `{partner}`\n📜 تاریخچه:\n"
+        report = f"🚩 **گزارش تخلف**\nدلیل: {reason}\nمتهم: `{partner}`\n📜 **تاریخچه:**\n"
         for h in history: report += f"{'[متهم]' if h['u']==partner else '[شاکی]'}: {h['val']}\n"
         btn = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("TEMP BAN ⏳", callback_data=f"adm_t_{partner}"), types.InlineKeyboardButton("PERM BAN 🚫", callback_data=f"adm_p_{partner}"))
         bot.send_message(OWNER_ID, report, reply_markup=btn)
-        bot.edit_message_text("✅ گزارش ارسال شد.", uid, call.message.id)
+        bot.edit_message_text("✅ گزارش شما ارسال شد.", uid, call.message.id)
 
     elif call.data == "confirm_end":
         p = db["users"][uid].get("partner")
