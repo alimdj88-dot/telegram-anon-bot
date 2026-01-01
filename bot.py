@@ -1,15 +1,18 @@
- # shadow_titan_complete.py
-# Shadow Titan — Complete version with:
-#  - VIP time-based plans (including free Xmas 90-day plan)
-#  - Robust profanity filter (normalization + obfuscation resistance)
-#  - Gift VIP (single + global) with duration selector
-#  - Time handling in Iran timezone (UTC+03:30)
-#  - Telegram Stars invoices (provider_token="" and currency="XTR")
-#  - Persistent JSON DB, admin panel, queue, anon messages, reports, bans
+# shadow_titan_full_fixed.py
+# کامل‌ترین نسخه Shadow Titan — رفع باگ‌ها:
+#  - callback/button fixes
+#  - invoice fallback (diagnostics + manual flow)
+#  - robust profanity filter (normalization & obfuscation-resistant)
+#  - VIP durations + Xmas free plan (one-time, 4-day window)
+#  - gift single & gift all with duration selector
+#  - Iran timezone handling (UTC+03:30)
+#  - persistent JSON DB, improved logging
 #
-# Replace TOKEN, OWNER_ID, CHANNEL, HF_TOKEN before running.
+# پیش‌نیاز:
+# pip install pyTelegramBotAPI flask requests
 
 import os
+import sys
 import json
 import time
 import random
@@ -23,65 +26,67 @@ import telebot
 from telebot import types
 import requests
 
-# ---------------- CONFIG (REPLACE THESE) ----------------
-TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"   # <--- جایگزین کن
-OWNER_ID = "8013245091"             # آیدی عددی خودت به صورت رشته یا عدد
-CHANNEL = "@ChatNaAnnouncements"     # یا "" اگر چک کانال نمی‌خوای
+# ---------------- CONFIG ----------------
+TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"   # <- جایگزین کنید
+OWNER_ID = "8013245091"             # آیدی عددی مالک (رشته یا عدد)
+CHANNEL = "@ChatNaAnnouncements"     # اگر می‌خواهی چک عضویت کانال داشته باشی
 SUPPORT = "@its_alimo"
-HF_TOKEN = ""                       # اگر می‌خوای AI scan فعال باشه بذار، در غیر اینصورت خالی
-# -------------------------------------------------------
+HF_TOKEN = ""                       # اگر می‌خواهی AI scan فعال باشه بذار
+
+# اگر provider token برای پرداخت دارید (نه اجباری برای Stars)، اینجا قرار بدین.
+PROVIDER_TOKEN = ""  # برای Telegram Stars خالی بمونه؛ اگر پرداخت درگاه دیگه دارید بذارید
 
 DATA_DIR = "db_files"
-LOG_FILE = "shadow_titan_full_log.log"
-WEB_HOST = "0.0.0.0"
-WEB_PORT = 8080
+LOG_FILE = "shadow_titan_full_fixed.log"
 
-# Timezone offset for Iran (no DST handling)
-IRAN_OFFSET_H = 3
-IRAN_OFFSET_M = 30
-IRAN_OFFSET = datetime.timedelta(hours=IRAN_OFFSET_H, minutes=IRAN_OFFSET_M)
-
-# Payment / Stars configuration
+# Currency for invoice (Stars)
 CURRENCY = "XTR"
 
-# VIP plans: note vip_xmas_free (price 0) added to list so it's visible in menu
+# VIP plan definitions (stars amounts and days)
 VIP_PLANS = {
     "vip_1w":  {"days": 7,   "stars": 25,   "title": "VIP 1 هفته"},
     "vip_1m":  {"days": 30,  "stars": 100,  "title": "VIP 1 ماهه"},
     "vip_3m":  {"days": 90,  "stars": 280,  "title": "VIP 3 ماهه"},
     "vip_6m":  {"days": 180, "stars": 560,  "title": "VIP 6 ماهه"},
     "vip_12m": {"days": 365, "stars": 860,  "title": "VIP 1 ساله"},
-    "vip_xmas_free": {"days": 90,  "stars": 0,   "title": "VIP کریسمس — 3 ماه (رایگان)"},
+    # Xmas paid is optional; Xmas free is shown as paid=0 plan but handled specially
+    "vip_xmas_free": {"days": 90, "stars": 0,   "title": "VIP کریسمس — 3 ماه (رایگان)"},
     "vip_xmas_paid": {"days": 365,"stars": 600, "title": "VIP کریسمس ویژه (پرداختی)"},
 }
 
-# Christmas free window (from bot start) in seconds
+# Xmas free window from bot start (4 days)
 CHRISTMAS_WINDOW_SECONDS = 4 * 86400  # 4 days
 
-# Ensure data dir exists
+# Iran timezone offset (fixed)
+IRAN_OFFSET_H = 3
+IRAN_OFFSET_M = 30
+IRAN_OFFSET = datetime.timedelta(hours=IRAN_OFFSET_H, minutes=IRAN_OFFSET_M)
+
+# Create data dir
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# Logging
+# ---------------- Logging ----------------
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
-logger = logging.getLogger("ShadowTitanComplete")
+logger = logging.getLogger("ShadowTitanFullFixed")
 
-# Flask keepalive
+# ---------------- Flask keepalive ----------------
 app = Flask(__name__)
+
 @app.route("/")
 def home():
-    return "Shadow Titan Complete — alive"
+    return "Shadow Titan Full Fixed — alive"
 
 def run_web():
     try:
-        app.run(host=WEB_HOST, port=WEB_PORT)
+        app.run(host="0.0.0.0", port=8080)
     except Exception as e:
         logger.error(f"Flask run error: {e}")
 
-# ---------------- DB helper ----------------
+# ---------------- DB Helper ----------------
 class DB:
     def __init__(self, dirpath):
         self.dir = dirpath
@@ -106,31 +111,33 @@ class DB:
             "payments": {}
         }
         with self.lock:
-            for k, fp in self.files.items():
-                if not os.path.exists(fp):
+            for k, path in self.files.items():
+                if not os.path.exists(path):
                     try:
-                        with open(fp, "w", encoding="utf-8") as f:
+                        with open(path, "w", encoding="utf-8") as f:
                             json.dump(defaults[k], f, ensure_ascii=False, indent=2)
                     except Exception as e:
-                        logger.error(f"init file error {fp}: {e}")
+                        logger.error(f"init file error {path}: {e}")
 
     def read(self, key):
-        fp = self.files.get(key)
-        if not fp: return {}
+        path = self.files.get(key)
+        if not path:
+            return {}
         with self.lock:
             try:
-                with open(fp, "r", encoding="utf-8") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"DB read error {key}: {e}")
                 return {}
 
     def write(self, key, data):
-        fp = self.files.get(key)
-        if not fp: return
+        path = self.files.get(key)
+        if not path:
+            return
         with self.lock:
             try:
-                with open(fp, "w", encoding="utf-8") as f:
+                with open(path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error(f"DB write error {key}: {e}")
@@ -140,7 +147,6 @@ def now_ts_utc():
     return int(time.time())
 
 def iran_now_dt():
-    # naive datetime in Iran offset (no DST)
     return datetime.datetime.utcnow() + IRAN_OFFSET
 
 def ts_to_iran_str(ts):
@@ -150,8 +156,8 @@ def ts_to_iran_str(ts):
     except Exception:
         return str(ts)
 
-# ---------------- profanity normalization ----------------
-# Full list taken/expanded from user's provided list (kept comprehensive)
+# ---------------- Profanity normalization & filter ----------------
+# Full list from user + expanded stems
 BAD_WORDS = [
     "کیر", "کیرم", "کیرت", "کیری", "کیرر", "کیرتو", "کیرش", "کیرها",
     "کس", "کص", "کوس", "کوث", "کوص", "کصص", "کسکش", "کسشر", "کسخل", "کسده", "کصده",
@@ -188,45 +194,48 @@ BAD_WORDS = [
     "سگ‌جان", "سگ‌مادر",
     "دیوث", "دیووس", "دیوث‌صفت",
     "كير", "كس", "كص", "جنده", "قحبه", "گاييد", "كون", "گوه",
-    # Short obscene stems to be safe
-    "گای", "گایید", "کصک"
+    # extra stems
+    "گای", "گایید", "کصک", "کونک"
 ]
 
-# Pre-normalize bad words for matching
-BAD_WORDS_NORM = []
-
-# Unicode diacritics and tatweel etc to remove
+# diacritics and ornate marks to remove
 DIACRITICS_RE = re.compile(r'[\u064B-\u065F\u0610-\u061A\u06D6-\u06ED\u0640]')
 
-# Normalize function: map Arabic chars -> Persian, remove diacritics, remove non-letters,
-# collapse repeated letters (>2 -> 2), lower-case
 def normalize_persian(text: str) -> str:
     if not text:
         return ""
     s = text.lower()
-    # map variant letters to common Persian forms
-    s = s.replace('ك', 'ک').replace('ي', 'ی').replace('ى', 'ی').replace('ؤ', 'و').replace('إ', 'ا').replace('أ', 'ا')
-    # remove diacritics/tashkeel and tatweel
+    # map variants to persian forms
+    s = s.replace('ك','ک').replace('ي','ی').replace('ى','ی').replace('ؤ','و').replace('إ','ا').replace('أ','ا')
+    # remove diacritics and tatweel
     s = DIACRITICS_RE.sub('', s)
-    s = s.replace('\u200c', '')  # zero-width non-joiner
-    s = s.replace('\u200b', '')  # zero width space
-    s = s.replace('-', '').replace('_', '').replace('.', '').replace('*', '').replace('/', '').replace('\\', '')
-    # remove punctuation and digits but keep letters (Persian/Arabic/Latin) and joiners removed above
+    s = s.replace('\u200c','').replace('\u200b','')
+    # remove many punctuation that users use to obfuscate
+    s = re.sub(r'[\s\.\-\_\*\|\\\/\:\;\'\"\,\(\)\[\]\{\}\?!ـ]', '', s)
+    # remove digits
+    s = re.sub(r'[0-9۰-۹]', '', s)
+    # keep Persian/Arabic/Latin letters only
     s = re.sub(r'[^آ-یa-zA-Z]', '', s)
-    # collapse repeated letters: aaa -> aa (keep up to 2 repeats)
+    # collapse long repetitions: e.g., کییییییر -> کییر (limit 2 repeats)
     s = re.sub(r'(.)\1{2,}', r'\1\1', s)
     return s
 
-# Prepare normalized bad words set
-for w in BAD_WORDS:
-    BAD_WORDS_NORM.append(normalize_persian(w))
+# pre-normalized bad words
+BAD_WORDS_NORM = [normalize_persian(w) for w in BAD_WORDS if w]
+
+def contains_bad(text: str) -> bool:
+    n = normalize_persian(text)
+    for bw in BAD_WORDS_NORM:
+        if bw and bw in n:
+            return True
+    return False
 
 # ---------------- Utility ----------------
 def rand_token(n=8):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=n))
 
-# ---------------- Bot class ----------------
-class ShadowTitanComplete:
+# ---------------- Bot core ----------------
+class ShadowTitan:
     def __init__(self, token):
         self.token = token
         self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
@@ -234,14 +243,15 @@ class ShadowTitanComplete:
         self.channel = CHANNEL
         self.support = SUPPORT
         self.hf_token = HF_TOKEN
+        self.provider_token = PROVIDER_TOKEN
         self.db = DB(DATA_DIR)
         self.start_ts = now_ts_utc()
         self.christmas_expires_at = self.start_ts + CHRISTMAS_WINDOW_SECONDS
-        self._prepare_handlers()
-        logger.info("ShadowTitanComplete initialized")
+        logger.info("ShadowTitan initialized")
+        self.register_handlers()
 
-    # DB user helpers
-    def _ensure_user(self, uid):
+    # DB helpers
+    def ensure_user(self, uid):
         uid = str(uid)
         users = self.db.read("users")
         if uid not in users:
@@ -262,33 +272,22 @@ class ShadowTitanComplete:
             self.db.write("users", users)
         return users[uid]
 
-    def _save_user(self, uid, user):
+    def save_user(self, uid, userd):
         users = self.db.read("users")
-        users[str(uid)] = user
+        users[str(uid)] = userd
         self.db.write("users", users)
 
-    def _is_vip(self, user):
+    def is_vip(self, userd):
         try:
-            return int(user.get("vip_until", 0)) > now_ts_utc()
+            return int(userd.get("vip_until", 0)) > now_ts_utc()
         except:
             return False
 
-    def _contains_bad(self, text):
-        # normalize and check substrings
-        if not text:
-            return False
-        n = normalize_persian(text)
-        # check each normalized bad word if in normalized text
-        for bw in BAD_WORDS_NORM:
-            if bw and bw in n:
-                return True
-        return False
-
-    # Payment helpers
-    def _make_payload(self, uid, plan_key):
+    # payment helper
+    def make_payload(self, uid, plan_key):
         return f"{plan_key}_{uid}_{now_ts_utc()}_{rand_token(6)}"
 
-    def _register_payment(self, payload, uid, plan_key, amount):
+    def register_payment(self, payload, uid, plan_key, amount):
         payments = self.db.read("payments")
         payments[payload] = {
             "uid": str(uid),
@@ -299,7 +298,7 @@ class ShadowTitanComplete:
         }
         self.db.write("payments", payments)
 
-    def _mark_payment_done(self, payload):
+    def mark_payment_done(self, payload):
         payments = self.db.read("payments")
         if payload in payments:
             payments[payload]["done"] = True
@@ -307,8 +306,8 @@ class ShadowTitanComplete:
             return payments[payload]
         return None
 
-    # Keyboards
-    def _kb_main(self, uid):
+    # keyboards
+    def kb_main(self, uid):
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("🛰 شروع چت ناشناس", "👤 پروفایل من")
         kb.add("📩 لینک ناشناس من", "📥 پیام‌های ناشناس")
@@ -318,13 +317,13 @@ class ShadowTitanComplete:
             kb.add("📊 پنل مدیریت")
         return kb
 
-    def _kb_chat(self):
+    def kb_chat(self):
         kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
         kb.add("🔚 پایان گفتگو", "🚩 گزارش تخلف")
         kb.add("🚫 بلاک و خروج", "👥 درخواست آیدی")
         return kb
 
-    def _kb_report(self):
+    def kb_report(self):
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(types.InlineKeyboardButton("فحاشی", callback_data="rep_insult"),
                types.InlineKeyboardButton("+18", callback_data="rep_nsfw"))
@@ -333,7 +332,7 @@ class ShadowTitanComplete:
         kb.add(types.InlineKeyboardButton("لغو ❌", callback_data="rep_cancel"))
         return kb
 
-    def _kb_vip_durations_for_admin(self, prefix):
+    def kb_duration_select(self, prefix):
         kb = types.InlineKeyboardMarkup(row_width=2)
         kb.add(types.InlineKeyboardButton("1 هفته", callback_data=f"{prefix}_7"),
                types.InlineKeyboardButton("1 ماه", callback_data=f"{prefix}_30"))
@@ -342,147 +341,123 @@ class ShadowTitanComplete:
         kb.add(types.InlineKeyboardButton("1 سال", callback_data=f"{prefix}_365"))
         return kb
 
-    # Prepare handlers
-    def _prepare_handlers(self):
+    # register handlers
+    def register_handlers(self):
         bot = self.bot
 
-        @bot.message_handler(commands=['start'])
-        def _start(msg):
+        @bot.message_handler(commands=["start"])
+        def start_handler(msg):
             uid = str(msg.chat.id)
             payload = msg.text.split(maxsplit=1)[1] if len(msg.text.split()) > 1 else None
-            self._ensure_user(uid)
-            db_bans = self.db.read("bans")
-            db_cfg = self.db.read("config")
+            self.ensure_user(uid)
+            bans = self.db.read("bans")
+            cfg = self.db.read("config")
 
-            # permanent ban
-            if uid in db_bans.get("permanent", {}):
-                reason = db_bans["permanent"].get(uid, "تخلف")
-                bot.send_message(uid, f"🚫 بن دائم\nدلیل: {reason}\nپشتیبانی: {self.support}")
+            # perm ban
+            if uid in bans.get("permanent", {}):
+                bot.send_message(uid, f"🚫 شما بن دائم هستید.\nدلیل: {bans['permanent'][uid]}\nپشتیبانی: {self.support}")
                 return
 
             # temp ban
-            tmp = db_bans.get("temporary", {})
-            if uid in tmp:
-                end = int(tmp[uid]["end"])
+            if uid in bans.get("temporary", {}):
+                end = int(bans["temporary"][uid]["end"])
                 if now_ts_utc() < end:
-                    rem_m = int((end - now_ts_utc()) / 60)
-                    bot.send_message(uid, f"🚫 بن موقت. مانده: {rem_m} دقیقه\nپشتیبانی: {self.support}")
+                    rem = int((end - now_ts_utc()) / 60)
+                    bot.send_message(uid, f"🚫 بن موقت. زمان باقی‌مانده: {rem} دقیقه\nپشتیبانی: {self.support}")
                     return
                 else:
-                    del tmp[uid]
-                    db_bans["temporary"] = tmp
-                    self.db.write("bans", db_bans)
+                    del bans["temporary"][uid]
+                    self.db.write("bans", bans)
 
             # maintenance
             users = self.db.read("users")
-            vip_now = self._is_vip(users.get(uid, {}))
-            if db_cfg.get("settings", {}).get("maintenance", False) and not (vip_now or uid == self.owner):
+            vip_now = self.is_vip(users.get(uid, {}))
+            if cfg.get("settings", {}).get("maintenance", False) and not (vip_now or uid == self.owner):
                 bot.send_message(uid, "🔧 ربات در حالت تعمیر است. فقط VIPها دسترسی دارند.")
                 return
 
-            # link payload (anon)
+            # payload link (anon)
             if payload and payload.startswith("msg_"):
                 target = payload[4:]
                 if target == uid:
                     bot.send_message(uid, "نمی‌توانید به خودتان پیام بفرستید.")
                     return
                 users = self.db.read("users")
-                if uid not in users:
-                    users[uid] = {
-                        "state": "name",
-                        "name": "نامشخص",
-                        "sex": "نامشخص",
-                        "age": 0,
-                        "warns": 0,
-                        "partner": None,
-                        "vip_until": 0,
-                        "blocks": [],
-                        "last_spin": "",
-                        "used_christmas": False,
-                        "pending_payment": None
-                    }
-                    self.db.write("users", users)
-                    bot.send_message(uid, "برای ارسال پیام ناشناس، نام مستعار خود را وارد کنید:")
-                else:
-                    users[uid]["state"] = "anon_send"
-                    users[uid]["anon_target"] = target
-                    self.db.write("users", users)
-                    bot.send_message(uid, "پیام ناشناس خود را وارد کنید:")
+                users[uid]["state"] = "anon_send"
+                users[uid]["anon_target"] = target
+                self.db.write("users", users)
+                bot.send_message(uid, "پیام ناشناس خود را وارد کنید:")
                 return
 
-            bot.send_message(uid, "🌟 به Shadow Titan خوش آمدی!", reply_markup=self._kb_main(uid))
+            bot.send_message(uid, "🌟 به Shadow Titan خوش آمدی!", reply_markup=self.kb_main(uid))
 
-        # pre checkout
         @bot.pre_checkout_query_handler(func=lambda q: True)
-        def _precheckout(query):
+        def precheckout(q):
             try:
-                bot.answer_pre_checkout_query(query.id, ok=True)
+                bot.answer_pre_checkout_query(q.id, ok=True)
             except Exception as e:
-                logger.error(f"pre_checkout answer failed: {e}")
+                logger.error(f"precheckout answer error: {e}")
 
-        # successful payment
-        @bot.message_handler(content_types=['successful_payment'])
-        def _successful_payment(message):
+        @bot.message_handler(content_types=["successful_payment"])
+        def successful_payment(msg):
             try:
                 payload = ""
                 try:
-                    payload = message.successful_payment.invoice_payload
+                    payload = msg.successful_payment.invoice_payload
                 except:
-                    payload = getattr(message.successful_payment, "payload", "")
+                    payload = getattr(msg.successful_payment, "payload", "")
                 if not payload:
-                    logger.warning("successful_payment had no payload")
+                    logger.warning("successful_payment with no payload")
                     return
                 payments = self.db.read("payments")
                 if payload not in payments:
-                    logger.warning(f"unknown payload: {payload}")
+                    logger.warning(f"unknown successful_payment payload: {payload}")
                     return
                 pay = payments[payload]
-                uid = str(message.chat.id)
-                users = self.db.read("users")
-                user = users.get(uid)
-                if not user:
-                    user = self._ensure_user(uid)
                 plan_key = pay.get("plan")
-                # if free plan somehow had invoice, ignore (free handled without invoice)
+                users = self.db.read("users")
+                user = users.get(str(msg.chat.id))
+                if not user:
+                    user = self.ensure_user(msg.chat.id)
                 plan = VIP_PLANS.get(plan_key)
                 if plan:
                     now = now_ts_utc()
                     start = max(now, int(user.get("vip_until", 0)))
                     user["vip_until"] = start + int(plan["days"]) * 86400
-                    users[uid] = user
+                    users[str(msg.chat.id)] = user
                     self.db.write("users", users)
                     payments[payload]["done"] = True
                     self.db.write("payments", payments)
-                    bot.send_message(uid, f"🎉 پرداخت موفق! {plan['title']} تا {ts_to_iran_str(user['vip_until'])} فعال شد.")
+                    bot.send_message(str(msg.chat.id), f"🎉 پرداخت موفق! {plan['title']} تا {ts_to_iran_str(user['vip_until'])} فعال شد.")
                 else:
-                    logger.warning(f"plan not found on payment success: {plan_key}")
+                    logger.warning(f"plan {plan_key} not found on successful_payment")
             except Exception as e:
                 logger.error(f"successful_payment handler error: {e}")
 
-        # main message handler
         @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
-        def _main(msg):
+        def main_handler(msg):
             try:
                 uid = str(msg.chat.id)
                 users = self.db.read("users")
                 if uid not in users:
-                    user = self._ensure_user(uid)
+                    user = self.ensure_user(uid)
                 else:
                     user = users[uid]
+
                 bans = self.db.read("bans")
                 cfg = self.db.read("config")
 
-                # bans check
+                # bans
                 if uid in bans.get("permanent", {}):
                     return
                 if uid in bans.get("temporary", {}) and now_ts_utc() < bans["temporary"][uid]["end"]:
                     return
 
                 # maintenance
-                if cfg.get("settings", {}).get("maintenance", False) and not (self._is_vip(user) or uid == self.owner):
+                if cfg.get("settings", {}).get("maintenance", False) and not (self.is_vip(user) or uid == self.owner):
                     return
 
-                # store last msg id if chatting
+                # save last chat msg id if in chat
                 if user.get("partner"):
                     user["last_chat_msg_id"] = msg.message_id
                     users[uid] = user
@@ -490,7 +465,7 @@ class ShadowTitanComplete:
 
                 text = msg.text or ""
 
-                # If in chat => forwarding, commands inside chat
+                # CHAT FLOW (when paired)
                 if user.get("partner"):
                     partner = user["partner"]
 
@@ -506,7 +481,7 @@ class ShadowTitanComplete:
                         user["report_last_msg_id"] = msg.message_id
                         users[uid] = user
                         self.db.write("users", users)
-                        bot.send_message(uid, "دلیل گزارش را انتخاب کن:", reply_markup=self._kb_report())
+                        bot.send_message(uid, "دلیل گزارش را انتخاب کن:", reply_markup=self.kb_report())
                         return
 
                     if text == "🚫 بلاک و خروج":
@@ -516,11 +491,11 @@ class ShadowTitanComplete:
                         user["blocks"] = blocks
                         users[uid] = user
                         self.db.write("users", users)
-                        self._end_chat(uid, partner, "بلاک کرد")
+                        self.end_chat(uid, partner, "بلاک کرد")
                         return
 
-                    # profanity filter (robust)
-                    if text and self._contains_bad(text):
+                    # profanity
+                    if text and contains_bad(text):
                         try:
                             bot.delete_message(uid, msg.message_id)
                         except:
@@ -529,20 +504,20 @@ class ShadowTitanComplete:
                         users[uid] = user
                         self.db.write("users", users)
                         if user["warns"] >= 3:
-                            self._ban_perm(uid, "فحاشی مکرر")
-                            self._end_chat(uid, partner, "بن شد")
+                            self.ban_perm(uid, "فحاشی مکرر")
+                            self.end_chat(uid, partner, "بن شد")
                             return
                         bot.send_message(uid, f"⚠️ اخطار {user['warns']}/3 – فحاشی ممنوع است!")
                         return
 
-                    # forward/copy
+                    # copy message
                     try:
                         bot.copy_message(partner, uid, msg.message_id)
                     except Exception as e:
                         logger.warning(f"copy_message error: {e}")
                     return
 
-                # Not in chat: handle menus
+                # NOT IN CHAT — handling menu actions
                 if text == "🛰 شروع چت ناشناس":
                     kb = types.InlineKeyboardMarkup(row_width=3)
                     kb.add(types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
@@ -552,7 +527,7 @@ class ShadowTitanComplete:
                     return
 
                 if text == "👤 پروفایل من":
-                    rank = "🎖 VIP" if self._is_vip(user) else "عادی"
+                    rank = "🎖 VIP" if self.is_vip(user) else "عادی"
                     vip_until = int(user.get("vip_until", 0))
                     vip_text = "ندارد"
                     if vip_until and vip_until > now_ts_utc():
@@ -567,18 +542,18 @@ class ShadowTitanComplete:
                     return
 
                 if text == "📩 لینک ناشناس من":
-                    username = None
+                    botname = None
                     try:
-                        username = self.bot.get_me().username
+                        botname = self.bot.get_me().username
                     except:
-                        username = "ShadowTitanBot"
-                    link = f"https://t.me/{username}?start=msg_{uid}"
+                        botname = "ShadowTitanBot"
+                    link = f"https://t.me/{botname}?start=msg_{uid}"
                     bot.send_message(uid, f"<b>لینک ناشناس شما</b>\n\n{link}")
                     return
 
                 if text == "📥 پیام‌های ناشناس":
-                    db_m = self.db.read("messages")
-                    inbox = db_m.get("inbox", {}).get(uid, [])
+                    messages = self.db.read("messages")
+                    inbox = messages.get("inbox", {}).get(uid, [])
                     if not inbox:
                         bot.send_message(uid, "هیچ پیام ناشناسی دریافت نکرده‌اید 📭")
                         return
@@ -599,8 +574,8 @@ class ShadowTitanComplete:
                             except:
                                 pass
                     if updated:
-                        db_m["inbox"][uid] = inbox
-                        self.db.write("messages", db_m)
+                        messages["inbox"][uid] = inbox
+                        self.db.write("messages", messages)
                     return
 
                 if text == "🎡 گردونه شانس روزانه":
@@ -624,50 +599,49 @@ class ShadowTitanComplete:
 
                 if text == "🎖 خرید VIP (پلن‌ها)":
                     kb = types.InlineKeyboardMarkup(row_width=1)
-                    # show Xmas free if in window and not used
                     now = now_ts_utc()
+                    # show xmas free if window and not used
                     if now < self.christmas_expires_at and not user.get("used_christmas", False):
-                        # vip_xmas_free is shown as free plan
                         kb.add(types.InlineKeyboardButton(VIP_PLANS["vip_xmas_free"]["title"], callback_data="buy_vip_free_xmas"))
-                    # show paid plans (and paid xmas if present)
+                    # show other paid plans
                     for key, p in VIP_PLANS.items():
-                        # skip the free entry here because we've inserted specially
                         if key == "vip_xmas_free":
                             continue
+                        # show all paid plans (stars)
                         kb.add(types.InlineKeyboardButton(f"{p['title']} — {p['stars']} ⭐", callback_data=f"buy_vip_paid|{key}"))
-                    bot.send_message(uid, "<b>پلن‌های VIP</b>\nانتخاب کن:", reply_markup=kb)
+                    bot.send_message(uid, "<b>پلن‌های VIP</b>\nلطفاً پلن مورد نظر را انتخاب کنید:", reply_markup=kb)
                     return
 
                 if text == "⚙ تنظیمات":
                     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     kb.add("✏️ تغییر نام", "🔢 تغییر سن", "⚧ تغییر جنسیت")
                     kb.add("🔙 بازگشت به منو")
-                    bot.send_message(uid, "تنظیمات:", reply_markup=kb)
+                    bot.send_message(uid, "تنظیمات پروفایل:", reply_markup=kb)
                     return
 
                 if text == "✏️ تغییر نام":
                     user["state"] = "change_name"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "نام جدید را وارد کن:")
+                    bot.send_message(uid, "نام جدید را وارد کنید:")
                     return
 
                 if user.get("state") == "change_name":
-                    if self._contains_bad(text):
+                    if contains_bad(text):
                         bot.send_message(uid, "نام نامعتبر است")
                         return
                     user["name"] = text[:30]
                     user["state"] = "idle"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "نام ذخیره شد ✅", reply_markup=self._kb_main(uid))
+                    bot.send_message(uid, "نام با موفقیت تغییر کرد ✅", reply_markup=self.kb_main(uid))
                     return
 
                 if text == "🔢 تغییر سن":
                     user["state"] = "change_age"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "سن خود را وارد کن:")
+                    bot.send_message(uid, "سن جدید را وارد کنید:")
                     return
 
                 if user.get("state") == "change_age":
@@ -678,18 +652,18 @@ class ShadowTitanComplete:
                     user["state"] = "idle"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "سن ذخیره شد ✅", reply_markup=self._kb_main(uid))
+                    bot.send_message(uid, "سن ذخیره شد ✅", reply_markup=self.kb_main(uid))
                     return
 
                 if text == "⚧ تغییر جنسیت":
                     kb = types.InlineKeyboardMarkup()
                     kb.add(types.InlineKeyboardButton("آقا 👦", callback_data="change_sex_m"),
                            types.InlineKeyboardButton("خانم 👧", callback_data="change_sex_f"))
-                    bot.send_message(uid, "جنسیت را انتخاب کن:", reply_markup=kb)
+                    bot.send_message(uid, "جنسیت را انتخاب کنید:", reply_markup=kb)
                     return
 
-                # Admin panel quick
-                if str(uid) == str(self.owner) and text == "📊 پنل مدیریت":
+                # admin menu
+                if uid == self.owner and text == "📊 پنل مدیریت":
                     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
                     kb.add("📈 آمار کامل", "🛠 تعمیر و نگهداری")
                     kb.add("🎖 گیفت VIP تکی", "🎖 گیفت VIP همگانی")
@@ -698,19 +672,19 @@ class ShadowTitanComplete:
                     bot.send_message(uid, "پنل مدیریت:", reply_markup=kb)
                     return
 
-                # Admin gift single ID input
-                if user.get("state") == "gift_single_id" and text and text.isdigit() and str(uid) == str(self.owner):
+                # gift single follow-up (admin enters numeric ID)
+                if user.get("state") == "gift_single_id" and text and text.isdigit() and uid == self.owner:
                     user["gift_target"] = text
                     user["state"] = "gift_single_reason"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "دلیل گیفت را وارد کنید:")
+                    bot.send_message(uid, "دلیل گیفت را وارد کن:")
                     return
 
-                if user.get("state") == "gift_single_reason" and str(uid) == str(self.owner):
+                if user.get("state") == "gift_single_reason" and uid == self.owner:
                     reason = text
                     target = user.get("gift_target")
-                    days = int(user.get("gift_days", 0) or 0)
+                    days = int(user.get("gift_days", 0))
                     if target and target in users:
                         now = now_ts_utc()
                         users[target]["vip_until"] = now + days * 86400
@@ -728,7 +702,7 @@ class ShadowTitanComplete:
                     self.db.write("users", users)
                     return
 
-                if user.get("state") == "gift_all_reason" and str(uid) == str(self.owner):
+                if user.get("state") == "gift_all_reason" and uid == self.owner:
                     reason = text
                     days = int(user.get("gift_days", 30))
                     now = now_ts_utc()
@@ -748,23 +722,27 @@ class ShadowTitanComplete:
                     return
 
                 if text in ("منو", "🔙 بازگشت به منو"):
-                    bot.send_message(uid, "منوی اصلی", reply_markup=self._kb_main(uid))
+                    bot.send_message(uid, "منوی اصلی", reply_markup=self.kb_main(uid))
                     return
 
-                # fallback
-                bot.send_message(uid, "از منو استفاده کن", reply_markup=self._kb_main(uid))
-
+                # fallback helpful message instead of "از منو استفاده کن" single-line
+                bot.send_message(uid, "برای شروع از دکمه‌های منو استفاده کن ✅", reply_markup=self.kb_main(uid))
             except Exception as e:
-                logger.error(f"main message handler error: {e}")
+                logger.error(f"main_handler error: {e}")
 
-        # callback handler
         @bot.callback_query_handler(func=lambda c: True)
-        def _callback(c):
+        def callback_handler(c):
             try:
                 uid = str(c.from_user.id)
                 data = c.data or ""
                 users = self.db.read("users")
-                user = users.get(uid) or self._ensure_user(uid)
+                user = users.get(uid) or self.ensure_user(uid)
+
+                # answer callback to remove "loading"
+                try:
+                    bot.answer_callback_query(c.id)
+                except:
+                    pass
 
                 # sex change
                 if data in ("change_sex_m", "change_sex_f"):
@@ -772,17 +750,16 @@ class ShadowTitanComplete:
                     user["state"] = "idle"
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.answer_callback_query(c.id, "جنسیت تغییر کرد")
-                    bot.send_message(uid, "تغییر انجام شد", reply_markup=self._kb_main(uid))
+                    bot.send_message(uid, "جنسیت با موفقیت تغییر کرد ✅", reply_markup=self.kb_main(uid))
                     return
 
-                # find matching
+                # find
                 if data.startswith("find_"):
                     dbq = self.db.read("queue")
                     if uid not in dbq.get("general", []):
                         dbq["general"].append(uid)
                     self.db.write("queue", dbq)
-                    bot.answer_callback_query(c.id, "در حال جستجو...")
+                    bot.send_message(uid, "در حال جستجو برای هم‌صحبت...")
                     pots = [p for p in dbq.get("general", []) if p != uid]
                     pots = [p for p in pots if uid not in users.get(p, {}).get("blocks", []) and p not in user.get("blocks", [])]
                     if pots:
@@ -799,17 +776,17 @@ class ShadowTitanComplete:
                         users[partner]["partner"] = uid
                         self.db.write("queue", dbq)
                         self.db.write("users", users)
-                        bot.send_message(uid, "هم‌صحبت پیدا شد!", reply_markup=self._kb_chat())
-                        bot.send_message(partner, "هم‌صحبت پیدا شد!", reply_markup=self._kb_chat())
+                        bot.send_message(uid, "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=self.kb_chat())
+                        bot.send_message(partner, "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=self.kb_chat())
                     else:
-                        bot.send_message(uid, "در صف قرار گرفتی؛ صبور باش...")
+                        bot.send_message(uid, "شما در صف قرار گرفتید؛ لطفاً صبور باشید...")
                     return
 
                 # anon reply selection
                 if data.startswith("anon_reply_"):
                     idx = int(data.split("_")[2])
-                    db_m = self.db.read("messages")
-                    inbox = db_m.get("inbox", {}).get(uid, [])
+                    dbm = self.db.read("messages")
+                    inbox = dbm.get("inbox", {}).get(uid, [])
                     if idx < 0 or idx >= len(inbox):
                         bot.answer_callback_query(c.id, "پیام نامعتبر")
                         return
@@ -818,22 +795,22 @@ class ShadowTitanComplete:
                     user["anon_reply_target"] = msgdata["from"]
                     users[uid] = user
                     self.db.write("users", users)
-                    bot.send_message(uid, "پاسخ بنویس:")
+                    bot.send_message(uid, "پاسخ خود را بنویسید:")
                     return
 
-                # end chat confirmation
+                # end chat confirm
                 if data == "end_yes":
                     partner = user.get("partner")
-                    self._end_chat(uid, partner, "پایان داد")
+                    self.end_chat(uid, partner, "پایان داد")
                     return
                 if data == "end_no":
-                    bot.answer_callback_query(c.id, "چت ادامه دارد")
+                    bot.answer_callback_query(c.id, "چت ادامه دارد ✅")
                     return
 
-                # report callbacks
+                # report
                 if data.startswith("rep_"):
                     if data == "rep_cancel":
-                        bot.answer_callback_query(c.id, "گزارش لغو شد")
+                        bot.answer_callback_query(c.id, "گزارش لغو شد ✅")
                         return
                     reasons = {"rep_insult":"فحاشی","rep_nsfw":"+18","rep_spam":"اسپم","rep_harass":"آزار"}
                     reason = reasons.get(data, "نامشخص")
@@ -851,7 +828,7 @@ class ShadowTitanComplete:
                     kb.add(types.InlineKeyboardButton("Ban Temp", callback_data=f"adm_ban_temp_{target}"),
                            types.InlineKeyboardButton("Warn 1", callback_data=f"adm_warn1_{target}"))
                     bot.send_message(self.owner, "اقدام:", reply_markup=kb)
-                    bot.answer_callback_query(c.id, "گزارش ارسال شد")
+                    bot.answer_callback_query(c.id, "گزارش ارسال شد ✅")
                     return
 
                 # admin actions
@@ -860,7 +837,7 @@ class ShadowTitanComplete:
                         bot.answer_callback_query(c.id, "مجاز نیستی")
                         return
                     parts = data.split("_")
-                    action = parts[1] if len(parts) > 1 else None
+                    action = parts[1]
                     target = parts[2] if len(parts) > 2 else None
                     if action == "ignore":
                         try:
@@ -868,7 +845,7 @@ class ShadowTitanComplete:
                         except:
                             pass
                     if action == "ban" and target == "perm":
-                        self._ban_perm(target, "گزارش تایید")
+                        self.ban_perm(target, "گزارش تایید")
                         try:
                             bot.edit_message_text("بن دائم اعمال شد", self.owner, c.message.message_id)
                         except:
@@ -877,7 +854,7 @@ class ShadowTitanComplete:
                         users = self.db.read("users")
                         users[self.owner]["state"] = f"temp_ban_minutes_{target}"
                         self.db.write("users", users)
-                        bot.send_message(self.owner, f"مدت بن موقت (دقیقه) برای {target} را وارد کن:")
+                        bot.send_message(self.owner, f"مدت (دقیقه) بن موقت برای {target} را وارد کن:")
                     if action and action.startswith("warn"):
                         warns = 1 if "1" in action else 2
                         users = self.db.read("users")
@@ -885,7 +862,7 @@ class ShadowTitanComplete:
                             users[target]["warns"] = users[target].get("warns", 0) + warns
                             self.db.write("users", users)
                             try:
-                                bot.send_message(target, f"⚠️ {warns} اخطار دریافت شد")
+                                bot.send_message(target, f"⚠️ {warns} اخطار دریافت کردی")
                             except:
                                 pass
                         try:
@@ -911,7 +888,7 @@ class ShadowTitanComplete:
                             pass
                     return
 
-                # CHRISTMAS FREE plan (no invoice)
+                # CHRISTMAS FREE (no invoice)
                 if data == "buy_vip_free_xmas":
                     now = now_ts_utc()
                     if now > self.christmas_expires_at:
@@ -928,42 +905,74 @@ class ShadowTitanComplete:
                     bot.send_message(uid, f"🎉 تبریک! VIP سه‌ماهه رایگان فعال شد — دلیل: ویژه کریسمس 🎄\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
                     return
 
-                # Paid plan: create invoice for Stars (provider_token must be empty)
+                # Paid invoice creation
                 if data.startswith("buy_vip_paid|"):
                     _, plan_key = data.split("|", 1)
                     plan = VIP_PLANS.get(plan_key)
                     if not plan:
                         bot.answer_callback_query(c.id, "پلن نامعتبر")
                         return
-                    # if plan price == 0, treat as free (but for paid flows price>0)
                     if int(plan.get("stars", 0)) == 0:
-                        bot.answer_callback_query(c.id, "این پلن رایگان است و باید به صورت مستقیم دریافت شود")
+                        bot.answer_callback_query(c.id, "این پلن رایگان است و باید مستقیم دریافت شود")
                         return
-                    payload = self._make_payload(uid, plan_key)
+                    payload = self.make_payload(uid, plan_key)
                     prices = [types.LabeledPrice(label=plan["title"], amount=int(plan["stars"]))]
                     try:
+                        # try to send invoice (Stars)
                         bot.send_invoice(
                             chat_id=int(uid),
                             title=plan["title"],
                             description=f"⏳ مدت: {plan['days']} روز\n{plan['title']}",
                             payload=payload,
-                            provider_token="",  # MUST be empty for Telegram Stars
+                            provider_token=self.provider_token if self.provider_token else "",
                             currency=CURRENCY,
                             prices=prices,
                             start_parameter="vip_buy"
                         )
                     except Exception as e:
-                        logger.error(f"send_invoice error: {e}")
+                        # invoice creation failed -> log and fallback
+                        logger.error(f"send_invoice failed for {uid} plan {plan_key}: {e}")
+                        # register payment record for manual flow so admin can mark it paid later
+                        self.register_payment(payload, uid, plan_key, plan["stars"])
+                        # fallback: send manual-payment instructions with unique code (payload)
+                        kb = types.InlineKeyboardMarkup(row_width=1)
+                        kb.add(types.InlineKeyboardButton("✅ اعلام پرداخت (برای پیگیری)", callback_data=f"manual_paid|{payload}"))
+                        # show message explaining likely reasons and manual option
+                        bot.send_message(uid,
+                                         "⚠️ خطا در ایجاد فاکتور (پرداخت خودکار ممکن است برای حساب شما فعال نباشد).\n\n"
+                                         "دو راه داری:\n"
+                                         "1) اگر می‌خواهی پرداخت خودکار (Stars) کار کند، باید BotFather و Business Mode و provider token را بررسی کنی.\n"
+                                         "2) پرداخت دستی: با استفاده از کد پیگیری در پایین، پرداخت را به روش دلخواه (تماس با ادمین یا روش توافقی) انجام بده و سپس روی 'اعلام پرداخت' بزنی تا پرداخت ثبت شود.\n\n"
+                                         f"کد پیگیری: <code>{payload}</code>\n\n"
+                                         "اگر می‌خواهی من به طور خودکار چک کنم و ادمین رو مطلع کنم، گزینه اعلام پرداخت را بزن.",
+                                         reply_markup=kb)
                         try:
-                            bot.answer_callback_query(c.id, "خطا در ایجاد فاکتور")
+                            bot.answer_callback_query(c.id, "خطا در ایجاد فاکتور — روش پرداخت دستی ارسال شد")
                         except:
                             pass
                         return
-                    self._register_payment(payload, uid, plan_key, plan["stars"])
-                    bot.answer_callback_query(c.id, "فاکتور ارسال شد ✅")
+                    # if send_invoice succeeded, register payment
+                    self.register_payment(payload, uid, plan_key, plan["stars"])
+                    try:
+                        bot.answer_callback_query(c.id, "فاکتور ارسال شد ✅")
+                    except:
+                        pass
                     return
 
-                # gift single duration selection (admin)
+                # manual paid button (user claims they paid by external method)
+                if data.startswith("manual_paid|"):
+                    payload = data.split("|",1)[1]
+                    payments = self.db.read("payments")
+                    pay = payments.get(payload)
+                    if not pay:
+                        bot.answer_callback_query(c.id, "پرداخت نامشخص")
+                        return
+                    # notify admin/owner to verify manual payment
+                    bot.send_message(self.owner, f"⚠️ اعلام پرداخت دستی از طرف {uid}\nکد: {payload}\nمبلغ: {pay.get('amount')}\nپلن: {pay.get('plan')}\nلطفاً پرداخت را بررسی و در صورت تائید، /confirm_manual {payload} را بزن.")
+                    bot.send_message(uid, "اعلام پرداخت شما ثبت شد. ادمین پس از بررسی پرداخت را تایید می‌کند.")
+                    return
+
+                # gift single duration selection
                 if data.startswith("gift_single_"):
                     days = int(data.split("_")[2])
                     user["gift_days"] = days
@@ -973,7 +982,7 @@ class ShadowTitanComplete:
                     bot.send_message(uid, "آیدی عددی کاربر را وارد کنید:")
                     return
 
-                # gift all duration selection
+                # gift all duration
                 if data.startswith("gift_all_"):
                     days = int(data.split("_")[2])
                     user["gift_days"] = days
@@ -983,27 +992,69 @@ class ShadowTitanComplete:
                     bot.send_message(uid, "دلیل هدیه VIP همگانی را وارد کنید:")
                     return
 
-                # default
+                # default fallback
+                bot.answer_callback_query(c.id, "عملیات انجام شد")
             except Exception as e:
-                logger.error(f"callback handler error: {e}")
+                logger.error(f"callback_handler error: {e}")
 
-        # end of handler registration
+        # admin command to confirm manual payment: /confirm_manual <payload>
+        @bot.message_handler(commands=["confirm_manual"])
+        def confirm_manual_cmd(msg):
+            if str(msg.chat.id) != str(self.owner):
+                return
+            parts = msg.text.split()
+            if len(parts) < 2:
+                bot.send_message(self.owner, "استفاده: /confirm_manual <payload>")
+                return
+            payload = parts[1]
+            payments = self.db.read("payments")
+            pay = payments.get(payload)
+            if not pay:
+                bot.send_message(self.owner, "پرداخت پیدا نشد")
+                return
+            if pay.get("done"):
+                bot.send_message(self.owner, "این پرداخت قبلاً ثبت شده")
+                return
+            # apply VIP
+            uid = pay.get("uid")
+            plan_key = pay.get("plan")
+            plan = VIP_PLANS.get(plan_key)
+            if not plan:
+                bot.send_message(self.owner, "پلن نامشخص")
+                return
+            users = self.db.read("users")
+            user = users.get(uid)
+            if not user:
+                bot.send_message(self.owner, "کاربر یافت نشد")
+                return
+            now = now_ts_utc()
+            start = max(now, int(user.get("vip_until", 0)))
+            user["vip_until"] = start + int(plan["days"]) * 86400
+            users[uid] = user
+            payments[payload]["done"] = True
+            self.db.write("users", users)
+            self.db.write("payments", payments)
+            bot.send_message(self.owner, f"✅ پرداخت دستی با کد {payload} تأیید شد. VIP به {uid} اعمال شد.")
+            try:
+                bot.send_message(uid, f"🎉 پرداخت شما تأیید شد. پلن {plan['title']} تا {ts_to_iran_str(user['vip_until'])} فعال شد.")
+            except:
+                pass
 
-    # admin helpers
-    def _ban_perm(self, uid, reason="تخلف"):
+    # helper admin methods
+    def ban_perm(self, uid, reason="تخلف"):
         bans = self.db.read("bans")
         bans.setdefault("permanent", {})[str(uid)] = reason
         self.db.write("bans", bans)
-        logger.info(f"perm ban {uid} reason {reason}")
+        logger.info(f"perm banned {uid} reason: {reason}")
 
-    def _ban_temp(self, uid, minutes=60, reason="تخلف"):
+    def ban_temp(self, uid, minutes=60, reason="تخلف"):
         bans = self.db.read("bans")
         end = now_ts_utc() + minutes * 60
         bans.setdefault("temporary", {})[str(uid)] = {"end": end, "reason": reason}
         self.db.write("bans", bans)
-        logger.info(f"temp ban {uid} until {end}")
+        logger.info(f"temp banned {uid} until {end}")
 
-    def _end_chat(self, a, b, msg="ترک کرد"):
+    def end_chat(self, a, b, msg="ترک کرد"):
         users = self.db.read("users")
         if a in users:
             users[a]["partner"] = None
@@ -1011,25 +1062,34 @@ class ShadowTitanComplete:
             users[b]["partner"] = None
         self.db.write("users", users)
         try:
-            self.bot.send_message(a, "چت پایان یافت", reply_markup=self._kb_main(a))
+            self.bot.send_message(a, "چت پایان یافت", reply_markup=self.kb_main(a))
         except:
             pass
         try:
-            self.bot.send_message(b, f"هم‌صحبت شما چت را {msg}", reply_markup=self._kb_main(b))
+            self.bot.send_message(b, f"هم‌صحبت شما چت را {msg}", reply_markup=self.kb_main(b))
         except:
             pass
 
     def run(self):
-        # start flask keepalive
         t = threading.Thread(target=run_web, daemon=True)
         t.start()
-        logger.info("Bot started polling")
-        self.bot.infinity_polling()
+        logger.info("Bot polling started")
+        try:
+            self.bot.infinity_polling(long_polling_timeout=60)
+        except Exception as e:
+            logger.error(f"infinity_polling crashed: {e}")
+            # try restart once
+            time.sleep(2)
+            try:
+                self.bot.infinity_polling(long_polling_timeout=60)
+            except Exception as e2:
+                logger.error(f"second polling crash: {e2}")
+                sys.exit(1)
 
-# ----------------- RUN -----------------
+# ---------------- run ----------------
 if __name__ == "__main__":
-    if TOKEN == "YOUR_TELEGRAM_BOT_TOKEN":
+    if TOKEN == "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU":
         print("لطفاً TOKEN را در بالای فایل تنظیم کنید.")
-        exit(1)
-    bot = ShadowTitanComplete(TOKEN)
+        sys.exit(1)
+    bot = ShadowTitan(TOKEN)
     bot.run()
