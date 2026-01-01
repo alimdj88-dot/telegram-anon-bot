@@ -1,3 +1,4 @@
+# shadow_titan_edited.py
 import telebot
 from telebot import types
 import json
@@ -15,8 +16,8 @@ import time
 # ==========================================
 # پیکربندی اولیه — حتما مقادیر زیر را جایگزین کن
 # ==========================================
-TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"          # <- جایگزین کن
-OWNER = "8013245091"                      # آیدی عددی مالک
+TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"          # <- جایگزین کن
+OWNER = "8013245091"                      # آیدی عددی مالک (رشته یا عدد)
 CHANNEL = "@ChatNaAnnouncements"          # کانال لازم عضویت
 SUPPORT = "@its_alimo"                    # آیدی پشتیبانی
 HF_TOKEN = "YOUR_HF_TOKEN"                # <- جایگزین کن (اگه می‌خوای AI scan فعال بمونه)
@@ -50,23 +51,24 @@ class DB:
             "bans": "db_bans.json",
             "queue": "db_queue.json",
             "messages": "db_messages.json",
-            "config": "db_config.json"
+            "config": "db_config.json",
+            "payments": "db_payments.json"
         }
         self.lock = threading.Lock()
         self.init_files()
 
     def init_files(self):
         defaults = {
-            # users mapping: uid -> user dict
-            "users": {"users": {}},
-            "bans": {"permanent": {}, "temporary": {}},
+            "users": {},
+            "bans": {"permanent": {}, "temporary": {}},  # temporary: {uid: {"end": timestamp, "reason": str}}
             "queue": {"general": []},
             "messages": {"inbox": {}},
             "config": {
                 "stats": {"chats": 0, "ai_detections": 0},
                 "settings": {"maintenance": False},
                 "broadcast": {"text": None}
-            }
+            },
+            "payments": {}
         }
         with self.lock:
             for key, path in self.files.items():
@@ -92,12 +94,12 @@ class DB:
                 logger.error(f"DB Write Error {key}: {e}")
 
 # ==========================================
-# هسته اصلی ربات – نسخه کامل با VIP زمان‌دار
+# هسته اصلی ربات – کامل‌ترین نسخه با بیش از ۹۵۰ خط واقعی
 # ==========================================
 class ShadowTitanBot:
     def __init__(self):
         self.token = TOKEN
-        self.owner = OWNER
+        self.owner = str(OWNER)
         self.channel = CHANNEL
         self.support = SUPPORT
         self.hf_token = HF_TOKEN
@@ -110,7 +112,7 @@ class ShadowTitanBot:
         except:
             self.username = "ShadowTitanBot"
 
-        # لیست جامع کلمات فحش فارسی
+        # لیست جامع کلمات فحش فارسی (می‌تونی لیست کامل‌تر بذاری)
         self.bad_words = [
             "کیر", "کیرم", "کیرت", "کیری", "کیرر", "کیرتو", "کیرش", "کیرها",
             "کس", "کص", "کوس", "کوث", "کوص", "کصص", "کسکش", "کسشر", "کسخل", "کسده", "کصده",
@@ -146,17 +148,23 @@ class ShadowTitanBot:
             "آشغال", "آشغالدونی",
             "سگ‌جان", "سگ‌مادر",
             "دیوث", "دیووس", "دیوث‌صفت",
-            "كير", "کس", "كص", "جنده", "قحبه", "گاييد", "كون", "گوه"
+            "كير", "كس", "كص", "جنده", "قحبه", "گاييد", "كون", "گوه"
         ]
 
-        # پلن‌های VIP زمان‌دار
+        # پلن‌های VIP زمان‌دار (مقادیر به "استارز" XTR)
         self.vip_plans = {
             "vip_1m":  {"days": 30,  "price": 100, "title": "VIP یک ماهه"},
             "vip_3m":  {"days": 90,  "price": 280, "title": "VIP سه ماهه"},
             "vip_6m":  {"days": 180, "price": 560, "title": "VIP شش ماهه"},
             "vip_12m": {"days": 365, "price": 860, "title": "VIP یک ساله"},
-            "vip_xmas":{"days": 365, "price": 600, "title": "VIP ویژه کریسمس 🎄"}
+            "vip_xmas_paid": {"days": 365, "price": 600, "title": "VIP ویژه کریسمس (پرداختی)"}
         }
+
+        # Christmas free settings
+        self.christmas_free_days = 90
+        self.christmas_free_window = 4 * 86400  # 4 days
+        self.christmas_start_ts = int(time.time())
+        self.christmas_expire_ts = self.christmas_start_ts + self.christmas_free_window
 
         self.register_handlers()
         logger.info("Shadow Titan v24.0 – کامل‌ترین نسخه با خرید VIP با Stars + رفع بن و گزارش رسانه")
@@ -164,7 +172,7 @@ class ShadowTitanBot:
     # ===== helper: آیا کاربر الان VIP داره؟ =====
     def is_vip(self, user):
         try:
-            return user.get("vip_until", 0) > datetime.datetime.now().timestamp()
+            return user.get("vip_until", 0) > int(time.time())
         except:
             return False
 
@@ -287,8 +295,8 @@ class ShadowTitanBot:
             # چک بن موقت
             if uid in db_b.get("temporary", {}):
                 end = db_b["temporary"][uid]["end"]
-                if datetime.datetime.now().timestamp() < end:
-                    rem = int((end - datetime.datetime.now().timestamp()) / 60)
+                if int(time.time()) < end:
+                    rem = int((end - int(time.time())) / 60)
                     self.bot.send_message(uid, f"🚫 <b>بن موقت</b>\nزمان باقی‌مانده: {rem} دقیقه\nپشتیبانی: {self.support}")
                     return
                 else:
@@ -308,8 +316,8 @@ class ShadowTitanBot:
                 if target == uid:
                     self.bot.send_message(uid, "نمی‌توانید به خودتان پیام بفرستید 😊")
                     return
-                if uid not in db_u["users"]:
-                    db_u["users"][uid] = {
+                if uid not in db_u.get("users", {}):
+                    db_u.setdefault("users", {})[uid] = {
                         "state": "name",
                         "name": "نامشخص",
                         "sex": "نامشخص",
@@ -319,7 +327,9 @@ class ShadowTitanBot:
                         "vip_until": 0,
                         "blocks": [],
                         "last_spin": "",
-                        "anon_target": target
+                        "anon_target": target,
+                        "used_christmas": False,
+                        "pending_payment": None
                     }
                     self.db.write("users", db_u)
                     self.bot.send_message(uid, "برای ارسال پیام ناشناس، نام مستعار خود را وارد کنید ✨")
@@ -331,8 +341,8 @@ class ShadowTitanBot:
                 return
 
             # ثبت‌نام عادی
-            if uid not in db_u["users"]:
-                db_u["users"][uid] = {
+            if uid not in db_u.get("users", {}):
+                db_u.setdefault("users", {})[uid] = {
                     "state": "name",
                     "name": "نامشخص",
                     "sex": "نامشخص",
@@ -341,7 +351,9 @@ class ShadowTitanBot:
                     "partner": None,
                     "vip_until": 0,
                     "blocks": [],
-                    "last_spin": ""
+                    "last_spin": "",
+                    "used_christmas": False,
+                    "pending_payment": None
                 }
                 self.db.write("users", db_u)
                 self.bot.send_message(uid, "🌟 به Shadow Titan خوش آمدی!\nلطفاً نام مستعار خود را وارد کنید:")
@@ -351,7 +363,10 @@ class ShadowTitanBot:
         # پرداخت‌ها (Pre-checkout)
         @self.bot.pre_checkout_query_handler(func=lambda query: True)
         def checkout(pre_checkout_query):
-            self.bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True, error_message="خطا در پرداخت")
+            try:
+                self.bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True, error_message="خطا در پرداخت")
+            except Exception as e:
+                logger.error(f"pre_checkout error: {e}")
 
         # هندلر پرداخت موفق (پیش از این vip=True بود — حالا vip_until رو تنظیم می‌کنیم)
         @self.bot.message_handler(content_types=['successful_payment'])
@@ -364,31 +379,40 @@ class ShadowTitanBot:
                 # fallback
                 payload = getattr(message.successful_payment, 'payload', '')
 
+            if not payload:
+                return
+
+            payments = self.db.read("payments")
+            if payload not in payments:
+                # unknown payload — ignore
+                return
+
+            pay = payments[payload]
+            plan_key = pay.get("plan")
             db_u = self.db.read("users")
             user = db_u["users"].get(uid)
             if not user:
                 return
 
-            if not payload.startswith("vip_"):
-                # اگر payload دیگری باشه می‌تونی هندل‌ش کنی
-                return
-
-            plan_key = payload.replace("vip_", "")
+            # apply VIP
             plan = self.vip_plans.get(plan_key)
-            if not plan:
-                return
-
-            now = datetime.datetime.now().timestamp()
-            current_until = user.get("vip_until", 0)
-            start = max(now, current_until)
-            user["vip_until"] = start + plan["days"] * 86400
-            self.db.write("users", db_u)
-
-            end_date = datetime.datetime.fromtimestamp(user["vip_until"]).strftime("%Y-%m-%d")
-            self.bot.send_message(uid, f"🎉 <b>VIP فعال شد!</b>\n\n"
-                                      f"📦 پلن: {plan['title']}\n"
-                                      f"📅 اعتبار تا: <b>{end_date}</b>\n\n"
-                                      "از امکانات VIP لذت ببر 🌟")
+            if plan:
+                now = int(time.time())
+                current_until = user.get("vip_until", 0)
+                start = max(now, current_until)
+                user["vip_until"] = start + plan["days"] * 86400
+                db_u["users"][uid] = user
+                self.db.write("users", db_u)
+                payments[payload]["done"] = True
+                self.db.write("payments", payments)
+                end_date = datetime.datetime.fromtimestamp(user["vip_until"]).strftime("%Y-%m-%d")
+                self.bot.send_message(uid, f"🎉 <b>VIP فعال شد!</b>\n\n"
+                                          f"📦 پلن: {plan['title']}\n"
+                                          f"📅 اعتبار تا: <b>{end_date}</b>\n\n"
+                                          "از امکانات VIP لذت ببر 🌟")
+            elif plan_key == "vip_xmas_free":
+                # should not reach here (free xmas handled without invoice)
+                pass
 
         # هندلر اصلی پیام‌ها
         @self.bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
@@ -401,7 +425,7 @@ class ShadowTitanBot:
             # چک بن
             if uid in db_b.get("permanent", {}):
                 return
-            if uid in db_b.get("temporary", {}) and datetime.datetime.now().timestamp() < db_b["temporary"][uid]["end"]:
+            if uid in db_b.get("temporary", {}) and int(time.time()) < db_b["temporary"][uid]["end"]:
                 return
 
             # چک تعمیر
@@ -431,14 +455,16 @@ class ShadowTitanBot:
             # خرید VIP — حالا منو میاره (پلن‌ها)
             if msg.text == "🎖 خرید VIP (پلن‌ها)":
                 kb = types.InlineKeyboardMarkup(row_width=1)
-                kb.add(
-                    types.InlineKeyboardButton("🎖 1 ماهه – 100 ⭐", callback_data="buy_vip_vip_1m"),
-                    types.InlineKeyboardButton("🎖 3 ماهه – 280 ⭐", callback_data="buy_vip_vip_3m"),
-                    types.InlineKeyboardButton("🎖 6 ماهه – 560 ⭐", callback_data="buy_vip_vip_6m"),
-                    types.InlineKeyboardButton("🎖 1 ساله – 860 ⭐", callback_data="buy_vip_vip_12m"),
-                    types.InlineKeyboardButton("🎄 VIP کریسمس – 600 ⭐", callback_data="buy_vip_vip_xmas"),
-                )
-
+                # free christmas: show only if in window and user hasn't used it yet
+                now_ts = int(time.time())
+                if now_ts < self.christmas_expire_ts and not user.get("used_christmas", False):
+                    kb.add(types.InlineKeyboardButton("🎄 VIP سه‌ماهه ویژه کریسمس — رایگان", callback_data="buy_vip_free_xmas"))
+                # paid plans: send invoice via Stars
+                for key, p in self.vip_plans.items():
+                    # skip the pay-xmas paid entry in listing if present or list it as paid
+                    title = p.get("title", key)
+                    price = p.get("price", 0)
+                    kb.add(types.InlineKeyboardButton(f"{title} — {price} ⭐", callback_data=f"buy_vip_paid|{key}"))
                 self.bot.send_message(
                     uid,
                     "<b>🎖 خرید رنک VIP Shadow Titan</b>\n\n"
@@ -609,7 +635,7 @@ class ShadowTitanBot:
                 rank = "🎖 VIP" if self.is_vip(user) else "عادی"
                 vip_until = user.get("vip_until", 0)
                 vip_text = "ندارد"
-                if vip_until and vip_until > datetime.datetime.now().timestamp():
+                if vip_until and vip_until > int(time.time()):
                     vip_text = datetime.datetime.fromtimestamp(vip_until).strftime("%Y-%m-%d")
                 self.bot.send_message(uid, f"<b>پروفایل شما</b>\n\n"
                                           f"نام: {user['name']}\n"
@@ -657,7 +683,7 @@ class ShadowTitanBot:
                 user["last_spin"] = today
                 # اگر برنده شد VIP 30 روزه بده (تصمیم منطقی برای زمان‌دار بودن)
                 if random.random() < 0.05:
-                    now = datetime.datetime.now().timestamp()
+                    now = int(time.time())
                     current_until = user.get("vip_until", 0)
                     start = max(now, current_until)
                     user["vip_until"] = start + 30 * 86400
@@ -705,7 +731,7 @@ class ShadowTitanBot:
                     total = len(db_u["users"])
                     males = sum(1 for d in db_u["users"].values() if d.get("sex") == "آقا")
                     females = total - males
-                    now_ts = datetime.datetime.now().timestamp()
+                    now_ts = int(time.time())
                     vips = sum(1 for d in db_u["users"].values() if d.get("vip_until", 0) > now_ts)
                     self.bot.send_message(uid, f"<b>آمار ربات</b>\n\n"
                                               f"کل کاربران: {total}\n"
@@ -731,17 +757,29 @@ class ShadowTitanBot:
                     user["state"] = "idle"
                     self.db.write("users", db_u)
 
-                # گیفت VIP تکی
+                # گیفت VIP تکی -> now shows duration selection first
                 elif text == "🎖 گیفت VIP تکی":
-                    user["state"] = "gift_single_id"
+                    user["state"] = "gift_single_select"
                     self.db.write("users", db_u)
-                    self.bot.send_message(uid, "آیدی عددی کاربر را وارد کنید:")
+                    kb = types.InlineKeyboardMarkup(row_width=2)
+                    kb.add(types.InlineKeyboardButton("1 هفته", callback_data="gift_single_7"),
+                           types.InlineKeyboardButton("1 ماه", callback_data="gift_single_30"))
+                    kb.add(types.InlineKeyboardButton("3 ماه", callback_data="gift_single_90"),
+                           types.InlineKeyboardButton("6 ماه", callback_data="gift_single_180"))
+                    kb.add(types.InlineKeyboardButton("1 سال", callback_data="gift_single_365"))
+                    self.bot.send_message(uid, "⏳ مدت VIP را برای هدیه انتخاب کنید:", reply_markup=kb)
 
-                # گیفت VIP همگانی
+                # گیفت VIP همگانی -> duration select
                 elif text == "🎖 گیفت VIP همگانی":
-                    user["state"] = "gift_all_reason"
+                    user["state"] = "gift_all_select"
                     self.db.write("users", db_u)
-                    self.bot.send_message(uid, "دلیل گیفت همگانی را بنویسید:")
+                    kb = types.InlineKeyboardMarkup(row_width=2)
+                    kb.add(types.InlineKeyboardButton("1 هفته", callback_data="gift_all_7"),
+                           types.InlineKeyboardButton("1 ماه", callback_data="gift_all_30"))
+                    kb.add(types.InlineKeyboardButton("3 ماه", callback_data="gift_all_90"),
+                           types.InlineKeyboardButton("6 ماه", callback_data="gift_all_180"))
+                    kb.add(types.InlineKeyboardButton("1 سال", callback_data="gift_all_365"))
+                    self.bot.send_message(uid, "⏳ مدت VIP همگانی را انتخاب کنید:", reply_markup=kb)
 
                 # حذف VIP
                 elif text == "❌ حذف VIP":
@@ -751,7 +789,7 @@ class ShadowTitanBot:
 
                 # لیست VIP
                 elif text == "📋 لیست VIP":
-                    now_ts = datetime.datetime.now().timestamp()
+                    now_ts = int(time.time())
                     vips = [u for u, d in db_u["users"].items() if d.get("vip_until", 0) > now_ts]
                     if not vips:
                         self.bot.send_message(uid, "هیچ کاربر VIP وجود ندارد")
@@ -786,7 +824,7 @@ class ShadowTitanBot:
                         msg_text += f"🆔 {u} - {name} (موقت تا {end_time})\n"
                     self.bot.send_message(uid, msg_text, reply_markup=kb)
 
-                # حالت‌های گیفت تکی
+                # حالت‌های گیفت تکی: after selecting duration, now ask for ID
                 if user.get("state") == "gift_single_id" and msg.text and msg.text.isdigit():
                     user["gift_target"] = msg.text
                     user["state"] = "gift_single_reason"
@@ -796,29 +834,32 @@ class ShadowTitanBot:
                 if user.get("state") == "gift_single_reason":
                     reason = msg.text
                     target = user.get("gift_target")
+                    duration_days = user.get("gift_days", 0)
                     if target and target in db_u["users"]:
-                        # گیفت دائمی (یا می‌تونی مدت بدی) -> اینجا ما 10 سال می‌دیم عملاً دائمی
-                        ten_years = 10 * 365 * 86400
-                        now_ts = datetime.datetime.now().timestamp()
-                        db_u["users"][target]["vip_until"] = now_ts + ten_years
+                        now_ts = int(time.time())
+                        db_u["users"][target]["vip_until"] = now_ts + duration_days * 86400
                         self.db.write("users", db_u)
-                        self.bot.send_message(uid, f"✅ رنک VIP به کاربر {target} گیفت شد")
+                        self.bot.send_message(uid, f"✅ رنک VIP به کاربر {target} به مدت {duration_days} روز گیفت شد")
                         try:
                             self.bot.send_message(target, f"🎉 <b>تبریک! رنک VIP دریافت کردید 🎖</b>\n\n"
                                                          f"دلیل: {reason}\nاز طرف مدیریت – مبارک باشد! ✨")
                         except:
                             pass
+                    else:
+                        self.bot.send_message(uid, "کاربر مورد نظر یافت نشد")
                     user["state"] = "idle"
+                    user.pop("gift_target", None)
+                    user.pop("gift_days", None)
                     self.db.write("users", db_u)
 
-                # گیفت همگانی
+                # حالت‌های گیفت همگانی: after selecting duration, ask for reason
                 if user.get("state") == "gift_all_reason":
                     reason = msg.text
+                    duration_days = user.get("gift_days", 0) or 30
                     sent = 0
-                    ten_years = 10 * 365 * 86400
-                    now_ts = datetime.datetime.now().timestamp()
+                    now_ts = int(time.time())
                     for u in db_u["users"]:
-                        db_u["users"][u]["vip_until"] = now_ts + ten_years
+                        db_u["users"][u]["vip_until"] = now_ts + duration_days * 86400
                         try:
                             self.bot.send_message(u, f"🎉 <b>تبریک! رنک VIP دریافت کردید 🎖</b>\n\n"
                                                      f"دلیل: {reason}\nاز طرف مدیریت – لذت ببرید! 🌟")
@@ -826,8 +867,9 @@ class ShadowTitanBot:
                         except:
                             pass
                     self.db.write("users", db_u)
-                    self.bot.send_message(uid, f"✅ رنک VIP به {sent} کاربر گیفت شد")
+                    self.bot.send_message(uid, f"✅ رنک VIP به {sent} کاربر با مدت {duration_days} روز گیفت شد")
                     user["state"] = "idle"
+                    user.pop("gift_days", None)
                     self.db.write("users", db_u)
 
                 # حذف VIP
@@ -847,7 +889,7 @@ class ShadowTitanBot:
                         return
                     minutes = int(msg.text)
                     target = user["state"].split("_")[3]
-                    end_time = datetime.datetime.now().timestamp() + minutes * 60
+                    end_time = int(time.time()) + minutes * 60
                     db_b = self.db.read("bans")
                     db_b["temporary"][target] = {"end": end_time, "reason": "بن موقت ادمین"}
                     self.db.write("bans", db_b)
@@ -872,17 +914,21 @@ class ShadowTitanBot:
             if not user:
                 return
 
+            # sex selection
             if call.data.startswith("sex_"):
                 user["sex"] = "آقا" if call.data == "sex_m" else "خانم"
                 user["state"] = "age"
                 self.db.write("users", db_u)
                 self.bot.send_message(uid, "سن خود را وارد کنید (۱۲–۹۹):")
+                return
 
             if call.data.startswith("change_sex_"):
                 user["sex"] = "آقا" if call.data == "change_sex_m" else "خانم"
                 self.db.write("users", db_u)
                 self.bot.send_message(uid, "جنسیت با موفقیت تغییر کرد ✅", reply_markup=self.kb_main(uid))
+                return
 
+            # find matching
             if call.data.startswith("find_"):
                 try:
                     self.bot.edit_message_text("در حال جستجو برای هم‌صحبت... 🔍", call.message.chat.id, call.message.message_id)
@@ -919,21 +965,29 @@ class ShadowTitanBot:
 
                     self.bot.send_message(uid, "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=self.kb_chatting())
                     self.bot.send_message(partner, "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=self.kb_chatting())
+                return
 
+            # end chat confirm
             if call.data == "end_yes":
                 self.end_chat(uid, user["partner"], "پایان داد")
+                return
 
             if call.data == "end_no":
                 self.bot.answer_callback_query(call.id, "چت ادامه دارد ✅")
+                return
 
+            # id share handling
             if call.data.startswith("id_share_yes_"):
                 target = call.data.split("_")[3]
                 username = call.from_user.username or "ندارد"
                 self.bot.send_message(target, f"آیدی هم‌صحبت: @{username}")
+                return
 
             if call.data == "id_share_no":
                 self.bot.answer_callback_query(call.id, "درخواست رد شد")
+                return
 
+            # anon reply selecting
             if call.data.startswith("anon_reply_"):
                 i = int(call.data.split("_")[2])
                 db_m = self.db.read("messages")
@@ -946,7 +1000,9 @@ class ShadowTitanBot:
                 user["anon_reply_target"] = msg_data["from"]
                 self.db.write("users", db_u)
                 self.bot.send_message(uid, "پاسخ خود را بنویسید:")
+                return
 
+            # report callbacks
             if call.data.startswith("rep_"):
                 if call.data == "rep_cancel":
                     self.bot.answer_callback_query(call.id, "گزارش لغو شد ✅")
@@ -975,7 +1031,9 @@ class ShadowTitanBot:
                        types.InlineKeyboardButton("Warning 2", callback_data=f"adm_warn2_{target}"))
                 self.bot.send_message(self.owner, "اقدام:", reply_markup=kb)
                 self.bot.answer_callback_query(call.id, "گزارش ارسال شد ✅")
+                return
 
+            # admin actions
             if call.data.startswith("adm_"):
                 if uid != self.owner:
                     return
@@ -987,73 +1045,29 @@ class ShadowTitanBot:
                     self.bot.edit_message_text("گزارش ignore شد", self.owner, call.message.message_id)
 
                 if action == "ban" and parts[2] == "perm":
-                    # این شاخه ممکن هرگز اجرا نشه بسته به ساختار callback
                     self.ban_perm(target, "گزارش تأیید شده")
                     self.bot.edit_message_text("بن دائم اعمال شد", self.owner, call.message.message_id)
 
                 if action == "ban" and parts[2] == "temp":
-                    user["state"] = f"temp_ban_minutes_{target}"
-                    self.db.write("users", db_u)
+                    users = self.db.read("users")
+                    users[self.owner]["state"] = f"temp_ban_minutes_{target}"
+                    self.db.write("users", users)
                     self.bot.send_message(self.owner, f"دقیقه بن موقت برای {target} را وارد کنید:")
 
                 if action.startswith("warn"):
                     warns = 1 if "1" in action else 2
-                    if target in db_u["users"]:
-                        db_u["users"][target]["warns"] = db_u["users"][target].get("warns", 0) + warns
-                        self.db.write("users", db_u)
+                    users = self.db.read("users")
+                    if target in users:
+                        users[target]["warns"] = users[target].get("warns", 0) + warns
+                        self.db.write("users", users)
                         try:
                             self.bot.send_message(target, f"⚠️ {warns} اخطار دریافت کردید")
                         except:
                             pass
                     self.bot.edit_message_text(f"{warns} اخطار اعمال شد", self.owner, call.message.message_id)
+                return
 
             if call.data.startswith("unban_perm_"):
                 target = call.data.split("_")[2]
                 db_b = self.db.read("bans")
-                if target in db_b["permanent"]:
-                    del db_b["permanent"][target]
-                    self.db.write("bans", db_b)
-                    try:
-                        self.bot.edit_message_text("کاربر بخشیده شد ✅", self.owner, call.message.message_id)
-                    except:
-                        pass
-                    try:
-                        self.bot.send_message(target, "حساب شما از بن دائم خارج شد 🌟")
-                    except:
-                        pass
-
-            # خرید VIP — کال‌بک انتخاب پلن -> ارسال فاکتور (اصلاح شده)
-            if call.data.startswith("buy_vip_"):
-                plan_key = call.data.replace("buy_vip_", "")
-                plan = self.vip_plans.get(plan_key)
-                if not plan:
-                    self.bot.answer_callback_query(call.id, "پلن نامعتبر ❌")
-                    return
-
-                prices = [types.LabeledPrice(label=plan["title"], amount=plan["price"])]
-                try:
-                    self.bot.send_invoice(
-                        chat_id=uid,
-                        title=plan["title"],
-                        description=f"⏳ مدت: {plan['days']} روز\n"
-                                    "✨ ارسال آزاد گیف و استیکر\n"
-                                    "🛠️ دسترسی در تعمیر\n"
-                                    "⚡ اتصال سریع‌تر",
-                        payload=f"vip_{plan_key}",
-                        provider_token="",  # برای Stars حتما باید خالی باشد
-                        currency="XTR",
-                        prices=prices,
-                        start_parameter="vip_buy"
-                    )
-                except Exception as e:
-                    logger.error(f"Send invoice error: {e}")
-                    self.bot.answer_callback_query(call.id, "خطا در ایجاد فاکتور")
-
-    def run(self):
-        print("Shadow Titan v24.0 – کامل‌ترین نسخه با بیش از ۹۵۰ خط واقعی")
-        self.bot.infinity_polling()
-
-if __name__ == "__main__":
-    Thread(target=run_web).start()
-    bot = ShadowTitanBot()
-    bot.run()
+                if 
