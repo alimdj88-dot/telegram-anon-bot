@@ -15,7 +15,7 @@ import time
 # ==========================================
 # پیکربندی اولیه — حتما مقادیر زیر را جایگزین کن
 # ==========================================
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"          # <- جایگزین کن
+TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"          # <- جایگزین کن
 OWNER = "8013245091"                      # آیدی عددی مالک
 CHANNEL = "@ChatNaAnnouncements"          # کانال لازم عضویت
 SUPPORT = "@its_alimo"                    # آیدی پشتیبانی
