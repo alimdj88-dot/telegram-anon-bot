@@ -5,7 +5,6 @@ import os
 import re
 import requests
 import datetime
-import time
 import logging
 import random
 import threading
@@ -22,24 +21,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ShadowTitan")
 
-# وب‌سرور برای زنده نگه داشتن ربات در سرورهای رایگان
+# وب‌سرور برای زنده نگه داشتن ربات
 app = Flask('')
 @app.route('/')
-def status(): return "Shadow Titan v13.1: Full Systems Operational"
+def status(): return "Shadow Titan v14.0: Full Systems Operational"
 
 def run_web_server():
     app.run(host='0.0.0.0', port=8080)
 
 # ==========================================
-# 2. کلاس مدیریت دیتابیس و داده‌های حجیم
+# 2. کلاس مدیریت دیتابیس
 # ==========================================
 class DatabaseManager:
     def __init__(self):
         self.files = {
             "users": "db_users.json",
             "bans": "db_bans.json",
-            "blocks": "db_blocks.json",  # جدید: بلاک لیست کاربران
             "queue": "db_queue.json",
+            "messages": "db_messages.json",  # پیام‌های ناشناس
             "reports": "db_reports.json",
             "config": "db_config.json"
         }
@@ -51,22 +50,23 @@ class DatabaseManager:
             defaults = {
                 "users": {"users": {}},
                 "bans": {"blacklist": {}},
-                "blocks": {"blocks": {}},  # هر کاربر: لیست uidهایی که بلاک کرده
-                "queue": {"male": [], "female": [], "any": []},
+                "queue": {"general": []},
+                "messages": {"inbox": {}},
                 "reports": {"archive": []},
                 "config": {"stats": {"chats": 0, "ai_detections": 0, "users": 0}, "settings": {"maintenance": False}}
             }
             for key, path in self.files.items():
                 if not os.path.exists(path):
                     with open(path, "w", encoding="utf-8") as f:
-                        json.dump(defaults[key], f, indent=4)
+                        json.dump(defaults[key], f, indent=4, ensure_ascii=False)
 
     def read(self, key):
         with self.lock:
             try:
                 with open(self.files[key], "r", encoding="utf-8") as f:
                     return json.load(f)
-            except: return defaults.get(key, {})  # بازگشت به پیش‌فرض اگر خطا
+            except:
+                return {}
 
     def write(self, key, data):
         with self.lock:
@@ -74,30 +74,31 @@ class DatabaseManager:
                 json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ==========================================
-# 3. هسته اصلی ربات (Shadow Sovereign Engine)
+# 3. هسته اصلی ربات
 # ==========================================
 class ShadowTitanBot:
     def __init__(self):
-        # تنظیمات پایه
         self.token = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
-        self.owner = "8013245091"
+        self.owner_id = "8013245091"  # آیدی عددی صاحب
+        self.support_username = "@its_alimo"  # پشتیبانی
         self.channel = "@ChatNaAnnouncements"
         self.hf_token = "Hf_YKgVObJxRxvxIXQWIKOEmGpcZxwehvCKqk"
         
-        # راه‌اندازی ملزومات
         self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
         self.db = DatabaseManager()
-        self.anti_spam = {}
         
-        # ثبت تمام رویدادها
+        try:
+            self.bot_username = self.bot.get_me().username
+        except:
+            self.bot_username = "ShadowTitanBot"  # fallback
+        
         self.register_actions()
         logger.info("Bot Engine Started Successfully.")
 
     # ------------------------------------------
-    # لایه تحلیل محتوا (AI & Security)
+    # لایه هوش مصنوعی
     # ------------------------------------------
     def ai_toxic_scan(self, text):
-        """تحلیل عمیق متن توسط مدل هوش مصنوعی Toxic-BERT برای محتوای سمی"""
         if not text or len(text.strip()) < 2: return 0.0
         clean_text = re.sub(r'[^ا-یa-zA-Z0-9\s]', '', text)
         url = "https://api-inference.huggingface.co/models/unitary/toxic-bert"
@@ -105,16 +106,16 @@ class ShadowTitanBot:
         try:
             response = requests.post(url, headers=headers, json={"inputs": clean_text}, timeout=10)
             if response.status_code == 200:
-                res_data = response.json()
-                if isinstance(res_data, list) and res_data[0]:
-                    for label in res_data[0]:
-                        if label['label'] == 'toxic': return label['score']
+                data = response.json()
+                if isinstance(data, list) and data:
+                    for item in data[0]:
+                        if item['label'] == 'toxic':
+                            return item['score']
         except Exception as e:
-            logger.error(f"AI Toxic Connection Error: {e}")
+            logger.error(f"AI Toxic Error: {e}")
         return 0.0
 
     def ai_nsfw_scan(self, text):
-        """تشخیص محتوای +18 (NSFW) با مدل NSFW Text Classifier"""
         if not text or len(text.strip()) < 2: return 0.0
         clean_text = re.sub(r'[^ا-یa-zA-Z0-9\s]', '', text)
         url = "https://api-inference.huggingface.co/models/michellejieli/nsfw_text_classifier"
@@ -122,24 +123,26 @@ class ShadowTitanBot:
         try:
             response = requests.post(url, headers=headers, json={"inputs": clean_text}, timeout=10)
             if response.status_code == 200:
-                res_data = response.json()
-                if isinstance(res_data, list) and res_data[0]:
-                    for label in res_data[0]:
-                        if label['label'] == 'nsfw': return label['score']
+                data = response.json()
+                if isinstance(data, list) and data:
+                    for item in data[0]:
+                        if item['label'] == 'nsfw':
+                            return item['score']
         except Exception as e:
-            logger.error(f"AI NSFW Connection Error: {e}")
+            logger.error(f"AI NSFW Error: {e}")
         return 0.0
 
     # ------------------------------------------
-    # سیستم‌های کیبورد (UI/UX Layer)
+    # کیبوردها
     # ------------------------------------------
     def get_kb_main(self, uid):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add("🛰 شروع چت ناشناس", "👤 پروفایل من")
+        markup.add("📩 لینک ناشناس من", "📥 پیام‌های ناشناس")
         markup.add("🎡 گردونه شانس روزانه", "🏆 برترین‌ها")
         markup.add("❓ راهنما و قوانین", "⚙ تنظیمات")
-        if str(uid) == self.owner:
-            markup.add("📊 پنل مدیریت مرکزی", "📢 ارسال همگانی")
+        if str(uid) == self.owner_id:
+            markup.add("📊 پنل مدیریت", "📢 ارسال همگانی")
         return markup
 
     def get_kb_chatting(self):
@@ -154,39 +157,53 @@ class ShadowTitanBot:
                    types.InlineKeyboardButton("خانم 👧", callback_data="reg_sex_f"))
         return markup
 
-    def get_kb_settings(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("✏️ تغییر نام", "🔢 تغییر سن")
-        markup.add("⚧ تغییر جنسیت", "🔙 بازگشت به منو")
-        return markup
-
-    def get_kb_admin(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("📈 آمار کاربران", "🚫 بلاک کاربر")
-        markup.add("✅ آنبلاک کاربر", "🛠 نگهداری سیستم")
-        markup.add("🔙 بازگشت به منو")
-        return markup
-
     # ------------------------------------------
-    # لایه پردازش پیام‌ها و وضعیت‌ها
+    # هندلرها
     # ------------------------------------------
     def register_actions(self):
-        
         @self.bot.message_handler(commands=['start'])
         def welcome(message):
             uid = str(message.chat.id)
+            payload = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+            
             db_u = self.db.read("users")
             
+            # حالت لینک ناشناس
+            if payload and payload.startswith("msg_"):
+                target = payload[4:]
+                if target == uid:
+                    self.bot.send_message(uid, "❌ نمی‌توانید به خودتان پیام ناشناس بفرستید.")
+                    if uid in db_u["users"]:
+                        self.bot.send_message(uid, "منوی اصلی:", reply_markup=self.get_kb_main(uid))
+                    return
+                
+                if uid not in db_u["users"]:
+                    db_u["users"][uid] = {
+                        "state": "STEP_NAME", "name": "نامشخص", "sex": "نامشخص", "age": 0,
+                        "warns": 0, "partner": None, "score": 10, "last_spin": "", "level": 1,
+                        "blocks": [], "anon_target": target
+                    }
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "👋 برای ارسال پیام ناشناس ابتدا نام مستعار خود را وارد کنید:")
+                else:
+                    user = db_u["users"][uid]
+                    user["state"] = "ANON_SENDING"
+                    user["anon_target"] = target
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "✉️ پیام ناشناس خود را بنویسید (فقط متن):")
+                return
+            
+            # ثبت‌نام عادی
             if uid not in db_u["users"]:
                 db_u["users"][uid] = {
-                    "state": "STEP_NAME", "name": "نامشخص", "sex": "نامشخص",
-                    "age": 0, "warns": 0, "ban_count": 0, "partner": None,
-                    "score": 10, "last_spin": "", "level": 1, "blocks": []  # لیست بلاک‌های کاربر
+                    "state": "STEP_NAME", "name": "نامشخص", "sex": "نامشخص", "age": 0,
+                    "warns": 0, "partner": None, "score": 10, "last_spin": "", "level": 1,
+                    "blocks": []
                 }
                 self.db.write("users", db_u)
-                self.bot.send_message(uid, "👋 <b>به ربات بزرگ چت ناشناس شادو خوش آمدید!</b>\n\nبرای شروع، لطفاً <b>نام مستعار</b> خود را بفرستید:", reply_markup=types.ReplyKeyboardRemove())
+                self.bot.send_message(uid, "👋 به ربات چت ناشناس شادو خوش آمدید!\n\nلطفاً <b>نام مستعار</b> خود را بفرستید:", reply_markup=types.ReplyKeyboardRemove())
             else:
-                self.bot.send_message(uid, "شما عضو هستید. از منوی زیر استفاده کنید:", reply_markup=self.get_kb_main(uid))
+                self.bot.send_message(uid, "خوش برگشتی! 🌟", reply_markup=self.get_kb_main(uid))
 
         @self.bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
         def central_logic(message):
@@ -194,344 +211,341 @@ class ShadowTitanBot:
             db_u = self.db.read("users")
             db_b = self.db.read("bans")
             
-            # 1. فیلتر مسدودیت
             if uid in db_b["blacklist"]:
-                self.bot.send_message(uid, "🚫 حساب شما مسدود است."); return
+                self.bot.send_message(uid, "🚫 حساب شما مسدود است.")
+                return
             
-            # 2. فیلتر عضویت
             try:
-                if str(uid) != self.owner:
-                    s = self.bot.get_chat_member(self.channel, uid).status
-                    if s not in ['member', 'administrator', 'creator']:
-                        self.bot.send_message(uid, f"❌ عضویت در کانال الزامی است:\n{self.channel}"); return
+                if uid != self.owner_id:
+                    status = self.bot.get_chat_member(self.channel, uid).status
+                    if status not in ['member', 'administrator', 'creator']:
+                        self.bot.send_message(uid, f"❌ برای استفاده باید در کانال عضو شوید:\n{self.channel}")
+                        return
             except: pass
-
-            # 3. مدیریت وضعیت‌های ثبت‌نام و تنظیمات
+            
             user = db_u["users"].get(uid)
             if not user: return
-
+            
+            # ثبت‌نام
             if user["state"] == "STEP_NAME":
-                if message.text and (self.ai_toxic_scan(message.text) > 0.7 or self.ai_nsfw_scan(message.text) > 0.7):
-                    self.bot.send_message(uid, "❌ نام نامناسب رد شد. نام دیگری بفرستید:"); return
-                user["name"] = message.text[:20]; user["state"] = "STEP_SEX"
+                if self.ai_toxic_scan(message.text) > 0.7 or self.ai_nsfw_scan(message.text) > 0.7:
+                    self.bot.send_message(uid, "❌ نام نامناسب. دوباره امتحان کنید:")
+                    return
+                user["name"] = message.text[:20]
+                user["state"] = "STEP_SEX"
                 self.db.write("users", db_u)
-                self.bot.send_message(uid, f"خوش آمدی <b>{user['name']}</b>. جنسیت خودت رو انتخاب کن:", reply_markup=self.get_kb_gender()); return
-
-            if user["state"] == "STEP_SEX":
-                # فقط کال‌بک مدیریت می‌کند
+                self.bot.send_message(uid, f"خوش آمدی <b>{user['name']}</b>!\nجنسیت خود را انتخاب کن:", reply_markup=self.get_kb_gender())
                 return
-
+            
             if user["state"] == "STEP_AGE":
-                if not message.text.isdigit() or not (12 <= int(message.text) <= 99):
-                    self.bot.send_message(uid, "❌ سن باید عددی بین ۱۲ تا ۹۹ باشد:"); return
-                user["age"] = int(message.text); user["state"] = "IDLE"
+                if not message.text.isdigit() or not 12 <= int(message.text) <= 99:
+                    self.bot.send_message(uid, "❌ سن باید بین ۱۲ تا ۹۹ باشد:")
+                    return
+                user["age"] = int(message.text)
+                user["state"] = "IDLE"
                 self.db.write("users", db_u)
-                self.bot.send_message(uid, "✅ پروفایل شما با موفقیت تایید شد!", reply_markup=self.get_kb_main(uid)); return
-
-            if user["state"] == "SET_NAME":
-                if message.text and (self.ai_toxic_scan(message.text) > 0.7 or self.ai_nsfw_scan(message.text) > 0.7):
-                    self.bot.send_message(uid, "❌ نام نامناسب رد شد. نام دیگری بفرستید:"); return
-                user["name"] = message.text[:20]; user["state"] = "IDLE"
-                self.db.write("users", db_u)
-                self.bot.send_message(uid, "✅ نام تغییر یافت.", reply_markup=self.get_kb_main(uid)); return
-
-            if user["state"] == "SET_AGE":
-                if not message.text.isdigit() or not (12 <= int(message.text) <= 99):
-                    self.bot.send_message(uid, "❌ سن باید عددی بین ۱۲ تا ۹۹ باشد:"); return
-                user["age"] = int(message.text); user["state"] = "IDLE"
-                self.db.write("users", db_u)
-                self.bot.send_message(uid, "✅ سن تغییر یافت.", reply_markup=self.get_kb_main(uid)); return
-
-            if user["state"] == "ADMIN_BAN":
-                if not message.text.isdigit(): 
-                    self.bot.send_message(uid, "❌ آیدی عددی وارد کنید:"); return
-                target = message.text
-                db_b["blacklist"][target] = {"reason": "Admin Ban", "date": str(datetime.datetime.now())}
-                self.db.write("bans", db_b)
-                self.bot.send_message(uid, f"✅ کاربر {target} بلاک شد.")
-                user["state"] = "IDLE"; self.db.write("users", db_u)
-                try: self.bot.send_message(target, "🚫 شما توسط ادمین بلاک شدید.")
+                self.bot.send_message(uid, "✅ ثبت‌نام کامل شد!", reply_markup=self.get_kb_main(uid))
+                return
+            
+            # ارسال پیام ناشناس
+            if user["state"] == "ANON_SENDING":
+                if message.content_type != "text":
+                    self.bot.send_message(uid, "❌ فقط متن مجاز است.")
+                    return
+                target = user["anon_target"]
+                db_m = self.db.read("messages")
+                if target not in db_m["inbox"]:
+                    db_m["inbox"][target] = []
+                db_m["inbox"][target].append({
+                    "text": message.text,
+                    "from": uid,
+                    "seen": False,
+                    "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+                self.db.write("messages", db_m)
+                self.bot.send_message(uid, "✅ پیام ناشناس ارسال شد.")
+                try:
+                    self.bot.send_message(target, "📩 یک پیام ناشناس جدید دریافت کردید!\nبرای مشاهده به «پیام‌های ناشناس» بروید.")
                 except: pass
+                user["state"] = "IDLE"
+                self.db.write("users", db_u)
                 return
-
-            if user["state"] == "ADMIN_UNBAN":
-                if not message.text.isdigit(): 
-                    self.bot.send_message(uid, "❌ آیدی عددی وارد کنید:"); return
-                target = message.text
-                if target in db_b["blacklist"]:
-                    del db_b["blacklist"][target]
-                    self.db.write("bans", db_b)
-                    self.bot.send_message(uid, f"✅ کاربر {target} آنبلاک شد.")
-                    try: self.bot.send_message(target, "✅ شما توسط ادمین آنبلاک شدید.")
-                    except: pass
-                else:
-                    self.bot.send_message(uid, "❌ کاربر یافت نشد.")
-                user["state"] = "IDLE"; self.db.write("users", db_u)
+            
+            # پاسخ به پیام ناشناس
+            if user["state"] == "ANON_REPLYING":
+                target = user["anon_reply_to"]
+                self.bot.send_message(target, f"📩 پاسخ ناشناس:\n{message.text}")
+                self.bot.send_message(uid, "✅ پاسخ ارسال شد.")
+                user["state"] = "IDLE"
+                self.db.write("users", db_u)
                 return
-
-            if user["state"] == "ADMIN_BROADCAST":
-                db_c = self.db.read("config")
-                db_c["stats"]["broadcast"] = message.text
-                self.db.write("config", db_c)
-                self.bot.send_message(uid, "📢 پیام برای ارسال همگانی ذخیره شد. برای تایید /send_broadcast بزنید.")
-                user["state"] = "IDLE"; self.db.write("users", db_u)
-                return
-
-            # 4. موتور چت فعال (Live Chat Core)
+            
+            # چت فعال
             if user.get("partner"):
                 pid = user["partner"]
                 
-                # مدیریت دکمه‌های حین چت
                 if message.text == "🔚 پایان گفتگو":
-                    m = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله 🔚", callback_data="chat_end_y"), types.InlineKeyboardButton("خیر 🔙", callback_data="chat_end_n"))
-                    self.bot.send_message(uid, "❓ آیا از قطع این گفتگو اطمینان دارید؟", reply_markup=m); return
-
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("بله 🔚", callback_data="chat_end_y"),
+                               types.InlineKeyboardButton("خیر 🔙", callback_data="chat_end_n"))
+                    self.bot.send_message(uid, "آیا مطمئن هستید؟", reply_markup=markup)
+                    return
+                
                 if message.text == "🚩 گزارش تخلف":
-                    user["state"] = "REPORT"; self.db.write("users", db_u)
-                    self.bot.send_message(uid, "📝 دلیل گزارش را بنویسید (حداکثر ۲۰۰ حرف):"); return
-
+                    user["state"] = "REPORT"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "دلیل گزارش را بنویسید:")
+                    return
+                
                 if message.text == "🚫 بلاک و خروج":
                     self.block_user(uid, pid)
-                    self.end_chat(uid, pid, "بلاک و خروج توسط کاربر")
+                    self.end_chat(uid, pid, "بلاک شد")
                     return
-
+                
                 if message.text == "👥 درخواست آیدی":
-                    m = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله، آیدی بده ✅", callback_data=f"id_share_y_{uid}"), types.InlineKeyboardButton("خیر ❌", callback_data="id_share_n"))
-                    self.bot.send_message(pid, "❓ هم‌صحبت درخواست آیدی شما را دارد. موافقید؟", reply_markup=m)
-                    self.bot.send_message(uid, "📩 درخواست ارسال شد. منتظر تایید باشید."); return
-
-                # آنالیز هوش مصنوعی پیام‌های متنی
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("بله ✅", callback_data=f"id_share_y_{uid}"),
+                               types.InlineKeyboardButton("خیر ❌", callback_data="id_share_n"))
+                    self.bot.send_message(pid, "هم‌صحبت درخواست آیدی شما را دارد. موافقید؟", reply_markup=markup)
+                    self.bot.send_message(uid, "درخواست ارسال شد.")
+                    return
+                
+                # بررسی محتوای نامناسب
                 if message.text:
-                    toxic_score = self.ai_toxic_scan(message.text)
-                    nsfw_score = self.ai_nsfw_scan(message.text)
-                    if toxic_score > 0.85 or nsfw_score > 0.85:
+                    toxic = self.ai_toxic_scan(message.text)
+                    nsfw = self.ai_nsfw_scan(message.text)
+                    if toxic > 0.85 or nsfw > 0.85:
                         self.bot.delete_message(uid, message.message_id)
-                        user["warns"] += 1; self.db.write("users", db_u)
-                        db_c = self.db.read("config")
-                        db_c["stats"]["ai_detections"] += 1
-                        self.db.write("config", db_c)
+                        user["warns"] += 1
+                        self.db.write("users", db_u)
                         if user["warns"] >= 3:
-                            self.auto_ban_user(uid, pid)
+                            self.auto_ban(uid, pid)
                             return
-                        self.bot.send_message(uid, f"⚠️ اخطار {user['warns']}/3! محتوای نامناسب (سمی: {toxic_score:.2f}, +18: {nsfw_score:.2f}) ممنوع است."); return
-
-                # انتقال پیام به هم‌صحبت
+                        self.bot.send_message(uid, f"⚠️ اخطار {user['warns']}/3 - محتوای نامناسب تشخیص داده شد.")
+                        return
+                
                 try:
                     self.bot.copy_message(pid, uid, message.message_id)
                 except: pass
                 return
-
+            
             if user["state"] == "REPORT":
-                if len(message.text) > 200:
-                    self.bot.send_message(uid, "❌ متن طولانی است. دوباره بنویسید:"); return
                 db_r = self.db.read("reports")
                 db_r["archive"].append({"from": uid, "target": user["partner"], "reason": message.text, "date": str(datetime.datetime.now())})
                 self.db.write("reports", db_r)
-                self.bot.send_message(uid, "✅ گزارش ثبت شد و به ادمین ارسال می‌گردد.")
-                try: self.bot.send_message(self.owner, f"🚩 گزارش جدید از {uid} علیه {user['partner']}: {message.text}")
+                self.bot.send_message(uid, "✅ گزارش ثبت شد.")
+                try:
+                    self.bot.send_message(self.owner_id, f"🚩 گزارش جدید از {uid} علیه {user['partner']}: {message.text}")
                 except: pass
-                user["state"] = "IDLE"; self.db.write("users", db_u)
+                user["state"] = "IDLE"
+                self.db.write("users", db_u)
                 return
-
-            # 5. مدیریت دکمه‌های منوی اصلی و تنظیمات
+            
+            # منوی اصلی
             self.handle_main_menu(message, uid, user, db_u)
 
+        self.init_callbacks()
+
     def handle_main_menu(self, message, uid, user, db_u):
-        if message.text == "🛰 شروع چت ناشناس":
-            m = types.InlineKeyboardMarkup(row_width=2)
-            m.add(types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
-                  types.InlineKeyboardButton("خانم 👧", callback_data="find_f"),
-                  types.InlineKeyboardButton("فرقی نمی‌کند 🌈", callback_data="find_any"))
-            self.bot.send_message(uid, "🔍 دنبال چه کسی هستی؟", reply_markup=m)
-
-        elif message.text == "👤 پروفایل من":
-            msg = (f"👤 <b>اطلاعات کاربری:</b>\n\n🏷 نام: {user['name']}\n⚧ جنسیت: {user['sex']}\n"
-                   f"🔢 سن: {user['age']}\n🏆 امتیاز: {user['score']}\n⚠️ اخطارها: {user['warns']}\n📈 سطح: {user['level']}")
-            self.bot.send_message(uid, msg)
-
-        elif message.text == "🎡 گردونه شانس روزانه":
+        text = message.text
+        
+        if text == "🛰 شروع چت ناشناس":
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            markup.add(types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
+                       types.InlineKeyboardButton("خانم 👧", callback_data="find_f"),
+                       types.InlineKeyboardButton("هرکی 🌈", callback_data="find_any"))
+            self.bot.send_message(uid, "🔍 دنبال چه کسی می‌گردی؟", reply_markup=markup)
+        
+        elif text == "👤 پروفایل من":
+            self.bot.send_message(uid, f"👤 <b>پروفایل شما:</b>\n\n🏷 نام: {user['name']}\n⚧ جنسیت: {user['sex']}\n🔢 سن: {user['age']}\n🏆 امتیاز: {user['score']}\n⚠️ اخطار: {user['warns']}")
+        
+        elif text == "📩 لینک ناشناس من":
+            link = f"https://t.me/{self.bot_username}?start=msg_{uid}"
+            self.bot.send_message(uid, f"📩 <b>لینک ناشناس شما:</b>\n\n{link}\n\nبا اشتراک این لینک، دیگران می‌توانند ناشناس به شما پیام بفرستند.")
+        
+        elif text == "📥 پیام‌های ناشناس":
+            db_m = self.db.read("messages")
+            messages = db_m["inbox"].get(uid, [])
+            if not messages:
+                self.bot.send_message(uid, "📥 هیچ پیام ناشناسی ندارید.")
+                return
+            
+            markup = types.InlineKeyboardMarkup()
+            text_msg = "<b>پیام‌های ناشناس شما:</b>\n\n"
+            for i, msg in enumerate(messages):
+                text_msg += f"<b>{i+1}.</b> {msg['text']}\n<i>{msg['time']}</i>\n\n"
+                markup.add(types.InlineKeyboardButton(f"پاسخ به پیام {i+1}", callback_data=f"anon_reply_{i}"))
+            
+            self.bot.send_message(uid, text_msg, reply_markup=markup)
+            
+            # علامت‌گذاری به عنوان دیده شده
+            updated = False
+            for msg in messages:
+                if not msg["seen"]:
+                    msg["seen"] = True
+                    updated = True
+                    try:
+                        self.bot.send_message(msg["from"], "✅ پیام ناشناس شما دیده شد.")
+                    except: pass
+            if updated:
+                self.db.write("messages", db_m)
+        
+        elif text == "🎡 گردونه شانس روزانه":
             today = str(datetime.date.today())
             if user["last_spin"] == today:
-                self.bot.send_message(uid, "❌ شما امروز شانس خود را امتحان کرده‌اید!"); return
-            win = random.choice([5, 10, 20, -5, 0])
-            user["score"] += win; user["last_spin"] = today
-            if user["score"] >= 100 * user["level"]: user["level"] += 1
+                self.bot.send_message(uid, "❌ امروز قبلاً چرخوندید!")
+                return
+            win = random.choice([5, 10, 15, 20, -5, 0])
+            user["score"] += win
+            user["last_spin"] = today
             self.db.write("users", db_u)
-            self.bot.send_message(uid, f"🎡 گردونه چرخید و شما **{win}** امتیاز گرفتید! سطح فعلی: {user['level']}")
-
-        elif message.text == "🏆 برترین‌ها":
-            top_users = sorted(db_u["users"].items(), key=lambda x: x[1]["score"], reverse=True)[:10]
-            msg = "🏆 <b>برترین کاربران بر اساس امتیاز:</b>\n\n"
-            for i, (u, data) in enumerate(top_users, 1):
-                msg += f"{i}. {data['name']} - امتیاز: {data['score']}\n"
+            self.bot.send_message(uid, f"🎡 گردونه چرخید! شما <b>{win}</b> امتیاز {'بردید' if win > 0 else 'باختید'}!\nامتیاز کل: {user['score']}")
+        
+        elif text == "🏆 برترین‌ها":
+            all_users = sorted(db_u["users"].items(), key=lambda x: x[1]["score"], reverse=True)[:10]
+            msg = "<b>🏆 برترین کاربران:</b>\n\n"
+            for i, (u, data) in enumerate(all_users, 1):
+                msg += f"{i}. {data['name']} - {data['score']} امتیاز\n"
             self.bot.send_message(uid, msg)
-
-        elif message.text == "❓ راهنما و قوانین":
-            guide = ("📜 <b>راهنما و قوانین:</b>\n\n"
-                     "۱. ثبت‌نام: نام، جنسیت، سن.\n"
-                     "۲. چت ناشناس: انتخاب جنسیت و جستجو.\n"
-                     "۳. قوانین: بدون فحاشی، محتوای +18، اسپم. اخطارها منجر به بن می‌شود.\n"
-                     "۴. گزارش: برای تخلفات استفاده کنید.\n"
-                     "۵. بلاک: هم‌صحبت را بلاک کنید تا match نشود.\n"
-                     "۶. گردونه: روزانه امتیاز بگیرید.\n"
-                     "پشتیبانی: @admin")
+        
+        elif text == "❓ راهنما و قوانین":
+            guide = (f"<b>📜 راهنما و قوانین</b>\n\n"
+                     "• چت ناشناس کاملاً ناشناس است\n"
+                     "• فحاشی، محتوای +18 و اسپم ممنوع\n"
+                     "• گزارش تخلف = اخطار → بن\n"
+                     "• لینک ناشناس برای دریافت پیام ناشناس\n"
+                     f"• پشتیبانی: {self.support_username}")
             self.bot.send_message(uid, guide)
+        
+        elif text == "⚙ تنظیمات":
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+            markup.add("✏️ تغییر نام", "🔢 تغییر سن", "⚧ تغییر جنسیت", "🔙 منوی اصلی")
+            self.bot.send_message(uid, "⚙ تنظیمات:", reply_markup=markup)
+        
+        elif text in ["✏️ تغییر نام", "🔢 تغییر سن", "⚧ تغییر جنسیت", "🔙 منوی اصلی"]:
+            if text == "🔙 منوی اصلی":
+                self.bot.send_message(uid, "بازگشت به منو", reply_markup=self.get_kb_main(uid))
+            elif text == "✏️ تغییر نام":
+                user["state"] = "SET_NAME"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "نام جدید را وارد کنید:")
+            elif text == "🔢 تغییر سن":
+                user["state"] = "SET_AGE"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "سن جدید را وارد کنید:")
+            elif text == "⚧ تغییر جنسیت":
+                self.bot.send_message(uid, "جنسیت جدید:", reply_markup=self.get_kb_gender())
 
-        elif message.text == "⚙ تنظیمات":
-            self.bot.send_message(uid, "⚙ <b>تنظیمات:</b>", reply_markup=self.get_kb_settings())
-
-        elif message.text == "✏️ تغییر نام":
-            user["state"] = "SET_NAME"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "✏️ نام جدید را وارد کنید:")
-
-        elif message.text == "🔢 تغییر سن":
-            user["state"] = "SET_AGE"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "🔢 سن جدید را وارد کنید:")
-
-        elif message.text == "⚧ تغییر جنسیت":
-            self.bot.send_message(uid, "⚧ جنسیت جدید را انتخاب کنید:", reply_markup=self.get_kb_gender())
-
-        elif message.text == "🔙 بازگشت به منو":
-            user["state"] = "IDLE"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "🔙 بازگشت به منو اصلی.", reply_markup=self.get_kb_main(uid))
-
-        elif message.text == "📊 پنل مدیریت مرکزی" and uid == self.owner:
-            self.bot.send_message(uid, "📊 <b>پنل ادمین:</b>", reply_markup=self.get_kb_admin())
-
-        elif message.text == "📈 آمار کاربران" and uid == self.owner:
-            db_c = self.db.read("config")
-            total = len(db_u["users"])
-            db_c["stats"]["users"] = total
-            self.db.write("config", db_c)
-            msg = f"📈 <b>آمار:</b>\nکاربران: {total}\nچت‌ها: {db_c['stats']['chats']}\nتشخیص AI: {db_c['stats']['ai_detections']}"
-            self.bot.send_message(uid, msg)
-
-        elif message.text == "🚫 بلاک کاربر" and uid == self.owner:
-            user["state"] = "ADMIN_BAN"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "🚫 آیدی کاربر را وارد کنید:")
-
-        elif message.text == "✅ آنبلاک کاربر" and uid == self.owner:
-            user["state"] = "ADMIN_UNBAN"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "✅ آیدی کاربر را وارد کنید:")
-
-        elif message.text == "🛠 نگهداری سیستم" and uid == self.owner:
-            db_c = self.db.read("config")
-            db_c["settings"]["maintenance"] = not db_c["settings"]["maintenance"]
-            self.db.write("config", db_c)
-            status = "فعال" if db_c["settings"]["maintenance"] else "غیرفعال"
-            self.bot.send_message(uid, f"🛠 حالت نگهداری: {status}")
-
-        elif message.text == "📢 ارسال همگانی" and uid == self.owner:
-            user["state"] = "ADMIN_BROADCAST"; self.db.write("users", db_u)
-            self.bot.send_message(uid, "📢 متن پیام همگانی را وارد کنید:")
+        # تنظیمات ادمین (در صورت نیاز بیشتر اضافه کنید)
 
     # ------------------------------------------
-    # بخش مدیریت رویدادهای کلیکی (Callbacks)
+    # کال‌بک‌ها
     # ------------------------------------------
     def init_callbacks(self):
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
-            uid = str(call.from_user.id)  # اصلاح: استفاده از call.from_user.id
+            uid = str(call.from_user.id)
             db_u = self.db.read("users")
-            db_q = self.db.read("queue")
-            db_b = self.db.read("blocks")
-            user = db_u["users"].get(uid, {})
+            user = db_u["users"].get(uid)
+            if not user: return
             
             if call.data.startswith("reg_sex_"):
-                sex = "آقا" if "m" in call.data else "خانم"
-                user["sex"] = sex
-                if user["state"] == "STEP_SEX":
-                    user["state"] = "STEP_AGE"
-                    self.bot.edit_message_text("🔢 حالا <b>سن</b> خود را وارد کنید:", call.message.chat.id, call.message.id)
-                else:
-                    self.bot.answer_callback_query(call.id, "⚧ جنسیت تغییر یافت.")
+                user["sex"] = "آقا" if call.data.endswith("m") else "خانم"
+                user["state"] = "STEP_AGE"
                 self.db.write("users", db_u)
-
+                self.bot.edit_message_text(chat_id=uid, message_id=call.message.message_id, text="🔢 سن خود را وارد کنید:")
+            
             elif call.data.startswith("find_"):
-                self.bot.edit_message_text("🔍 در حال جستجوی هم‌صحبت...", call.message.chat.id, call.message.id)
-                pref = call.data.split("_")[1]  # m, f, any
-                queue_key = pref if pref != "any" else "any"
-                if uid not in db_q[queue_key]: db_q[queue_key].append(uid)
+                pref = call.data[5:]  # m, f, any
+                self.bot.edit_message_text(chat_id=uid, message_id=call.message.message_id, text="🔍 در حال جستجو...")
+                
+                db_q = self.db.read("queue")
+                q = db_q["general"]
+                
+                if uid not in q:
+                    q.append(uid)
                 self.db.write("queue", db_q)
                 
-                # منطق matching پیشرفته
-                potential_queues = [queue_key]
-                if pref == "any": potential_queues = ["male", "female", "any"]
+                # پیدا کردن پارتنر
+                all_pots = [p for p in q if p != uid]
+                # حذف بلاک‌شده‌ها
+                all_pots = [p for p in all_pots if uid not in db_u["users"][p].get("blocks", []) and p not in user.get("blocks", [])]
                 
-                found = False
-                for q_key in potential_queues:
-                    pots = [p for p in db_q[q_key] if p != uid and p not in user.get("blocks", []) and uid not in db_u["users"].get(p, {}).get("blocks", [])]
-                    if pots:
-                        partner = pots[0]
-                        db_q[q_key].remove(partner)
-                        if uid in db_q[queue_key]: db_q[queue_key].remove(uid)
-                        user["partner"] = partner
-                        db_u["users"][partner]["partner"] = uid
-                        db_c = self.db.read("config")
-                        db_c["stats"]["chats"] += 1
-                        self.db.write("config", db_c)
-                        self.db.write("users", db_u)
-                        self.db.write("queue", db_q)
-                        self.bot.send_message(uid, "💎 متصل شدید! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
-                        self.bot.send_message(partner, "💎 متصل شدید! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
-                        found = True
-                        break
+                if not all_pots:
+                    self.bot.send_message(uid, "⏳ در صف انتظار هستید... کمی صبر کنید یا دوباره جستجو کنید.")
+                    return
                 
-                if not found:
-                    self.bot.send_message(uid, "⏳ در صف انتظار هستید. منتظر بمانید یا دوباره جستجو کنید.")
-
+                # اولویت جنسیت
+                opposite = "خانم" if user["sex"] == "آقا" else "آقا"
+                target_sex = opposite if pref in ["m", "f"] else None
+                if pref == "m": target_sex = "خانم"
+                if pref == "f": target_sex = "آقا"
+                
+                preferred = [p for p in all_pots if target_sex is None or db_u["users"][p]["sex"] == target_sex]
+                pots = preferred or all_pots
+                
+                partner = random.choice(pots)
+                q.remove(uid)
+                q.remove(partner)
+                self.db.write("queue", db_q)
+                
+                user["partner"] = partner
+                db_u["users"][partner]["partner"] = uid
+                self.db.write("users", db_u)
+                
+                db_c = self.db.read("config")
+                db_c["stats"]["chats"] += 1
+                self.db.write("config", db_c)
+                
+                self.bot.send_message(uid, "💎 هم‌صحبت پیدا شد! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
+                self.bot.send_message(partner, "💎 هم‌صحبت پیدا شد! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
+            
             elif call.data == "chat_end_y":
                 pid = user["partner"]
-                self.end_chat(uid, pid, "پایان توسط کاربر")
-
-            elif call.data == "chat_end_n":
-                self.bot.answer_callback_query(call.id, "🔙 بازگشت به چت.")
-
+                self.end_chat(uid, pid, "ترک کرد")
+            
             elif call.data.startswith("id_share_y_"):
                 sharer = call.data.split("_")[3]
-                self.bot.answer_callback_query(call.id, "✅ آیدی ارسال شد.")
-                try:
-                    self.bot.send_message(sharer, f"👥 آیدی هم‌صحبت: @{call.from_user.username or call.from_user.id}")
-                except: pass
-
-            elif call.data == "id_share_n":
-                self.bot.answer_callback_query(call.id, "❌ درخواست رد شد.")
-
+                username = call.from_user.username
+                self.bot.send_message(sharer, f"👥 آیدی هم‌صحبت: @{username or call.from_user.id}")
+            
+            elif call.data.startswith("anon_reply_"):
+                index = int(call.data.split("_")[2])
+                db_m = self.db.read("messages")
+                msg = db_m["inbox"][uid][index]
+                user["state"] = "ANON_REPLYING"
+                user["anon_reply_to"] = msg["from"]
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "پاسخ خود را بنویسید:")
+            
     def end_chat(self, uid, pid, reason):
         db_u = self.db.read("users")
         db_u["users"][uid]["partner"] = None
         db_u["users"][pid]["partner"] = None
         self.db.write("users", db_u)
-        self.bot.send_message(uid, f"👋 چت پایان یافت ({reason}).", reply_markup=self.get_kb_main(uid))
-        self.bot.send_message(pid, f"⚠️ هم‌صحبت چت را ترک کرد ({reason}).", reply_markup=self.get_kb_main(pid))
-
+        self.bot.send_message(uid, "👋 چت پایان یافت.", reply_markup=self.get_kb_main(uid))
+        self.bot.send_message(pid, f"⚠️ هم‌صحبت چت را {reason}.", reply_markup=self.get_kb_main(pid))
+    
     def block_user(self, uid, target):
         db_u = self.db.read("users")
         if target not in db_u["users"][uid]["blocks"]:
             db_u["users"][uid]["blocks"].append(target)
-            self.db.write("users", db_u)
-        self.bot.send_message(uid, "🚫 کاربر بلاک شد و دیگر match نخواهد شد.")
-
-    def auto_ban_user(self, uid, pid=None):
-        db_u = self.db.read("users")
-        db_b = self.db.read("bans")
-        db_b["blacklist"][uid] = {"reason": "AI Content Policy Violation", "date": str(datetime.datetime.now())}
-        db_u["users"][uid]["partner"] = None
-        if pid: db_u["users"][pid]["partner"] = None
         self.db.write("users", db_u)
+        self.bot.send_message(uid, "🚫 کاربر بلاک شد و دیگر متصل نمی‌شوید.")
+    
+    def auto_ban(self, uid, pid=None):
+        db_b = self.db.read("bans")
+        db_b["blacklist"][uid] = {"reason": "محتوای نامناسب", "date": str(datetime.datetime.now())}
         self.db.write("bans", db_b)
-        self.bot.send_message(uid, "🚫 شما به دلیل نقض مکرر قوانین مسدود شدید.")
-        if pid: self.bot.send_message(pid, "⚠️ هم‌صحبت به دلیل تخلف مسدود شد.", reply_markup=self.get_kb_main(pid))
+        self.bot.send_message(uid, "🚫 به دلیل تخلف مکرر بن شدید.")
+        if pid:
+            self.bot.send_message(pid, "⚠️ هم‌صحبت بن شد.", reply_markup=self.get_kb_main(pid))
 
     def run(self):
-        self.init_callbacks()
-        print("--- Shadow Titan v13.1 Running ---")
+        print("--- Shadow Titan v14.0 Running ---")
         self.bot.infinity_polling()
 
-# ==========================================
-# 4. نقطه ورود نهایی (Main Entry)
-# ==========================================
 if __name__ == "__main__":
     Thread(target=run_web_server).start()
-    titan = ShadowTitanBot()
-    titan.run()
+    bot = ShadowTitanBot()
+    bot.run()
