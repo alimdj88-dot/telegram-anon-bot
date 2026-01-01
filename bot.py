@@ -24,7 +24,7 @@ from telebot import types
 import requests
 
 # ---------------- CONFIG (REPLACE THESE) ----------------
-TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"   # <--- جایگزین کن
+TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"   # <--- جایگزین کن
 OWNER_ID = "8013245091"             # آیدی عددی خودت به صورت رشته یا عدد
 CHANNEL = "@ChatNaAnnouncements"     # یا "" اگر چک کانال نمی‌خوای
 SUPPORT = "@its_alimo"
