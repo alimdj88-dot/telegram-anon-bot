@@ -15,7 +15,7 @@ from telebot import types
 import requests
 import math
 
-BOT_TOKEN = ""
+BOT_TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
 BOT_TOKEN_DIRECT = ""
 if not BOT_TOKEN:
     BOT_TOKEN = BOT_TOKEN_DIRECT
