@@ -8,343 +8,295 @@ import datetime
 import time
 import logging
 import random
+import threading
 from flask import Flask
 from threading import Thread
 
 # ==========================================
-# ۱. پیکربندی سیستم لاگ‌گیری و مانیتورینگ
+# 1. نظام مدیریت لاگ و مانیتورینگ پیشرفته
 # ==========================================
 logging.basicConfig(
-    filename='system_core.log',
+    filename='bot_internal_core.log',
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s | %(levelname)s | %(name)s | %(message)s'
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ShadowTitan")
 
+# وب‌سرور برای زنده نگه داشتن ربات در سرورهای رایگان
 app = Flask('')
 @app.route('/')
-def live_monitor():
-    return "<h1>Shadow Sovereign Engine v10.0</h1><p>Status: Extreme Performance</p>"
+def status(): return "Shadow Titan v13.0: Full Systems Operational"
 
-def run_flask_app():
+def run_web_server():
     app.run(host='0.0.0.0', port=8080)
 
-def start_server():
-    server_thread = Thread(target=run_flask_app)
-    server_thread.daemon = True
-    server_thread.start()
+# ==========================================
+# 2. کلاس مدیریت دیتابیس و داده‌های حجیم
+# ==========================================
+class DatabaseManager:
+    def __init__(self):
+        self.files = {
+            "users": "db_users.json",
+            "bans": "db_bans.json",
+            "queue": "db_queue.json",
+            "reports": "db_reports.json",
+            "config": "db_config.json"
+        }
+        self.lock = threading.Lock()
+        self._init_files()
+
+    def _init_files(self):
+        with self.lock:
+            defaults = {
+                "users": {"users": {}},
+                "bans": {"blacklist": {}},
+                "queue": {"male": [], "female": [], "any": []},
+                "reports": {"archive": []},
+                "config": {"stats": {"chats": 0, "ai_detections": 0}, "settings": {"maintenance": False}}
+            }
+            for key, path in self.files.items():
+                if not os.path.exists(path):
+                    with open(path, "w", encoding="utf-8") as f:
+                        json.dump(defaults[key], f, indent=4)
+
+    def read(self, key):
+        with self.lock:
+            try:
+                with open(self.files[key], "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except: return {}
+
+    def write(self, key, data):
+        with self.lock:
+            with open(self.files[key], "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
 
 # ==========================================
-# ۲. متغیرهای حیاتی و پیکربندی توکن‌ها
+# 3. هسته اصلی ربات (Shadow Sovereign Engine)
 # ==========================================
-API_TOKEN = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
-OWNER_ID = "8013245091"
-CHANNEL_ID = "@ChatNaAnnouncements"
-HF_TOKEN = "Hf_YKgVObJxRxvxIXQWIKOEmGpcZxwehvCKqk"
-
-bot = telebot.TeleBot(API_TOKEN, parse_mode="HTML")
-
-# فایل‌های دیتابیس برای مدیریت کلان‌داده
-FILE_USERS = "db_users_main.json"
-FILE_BLACKLIST = "db_blacklist_core.json"
-FILE_REPORTS = "db_violation_archive.json"
-FILE_CONFIG = "db_system_config.json"
-FILE_QUEUE = "db_matchmaking_queue.json"
-
-# ==========================================
-# ۳. لایه مدیریت داده (Data Access Layer)
-# ==========================================
-def initialize_all_databases():
-    """تضمین سلامت و وجود تمامی فایل‌های دیتابیس"""
-    db_templates = {
-        FILE_USERS: {"users": {}},
-        FILE_BLACKLIST: {"banned": {}},
-        FILE_REPORTS: {"all_reports": []},
-        FILE_CONFIG: {"stats": {"total_chats": 0, "ai_blocks": 0}, "settings": {"maintenance": False}},
-        FILE_QUEUE: {"male": [], "female": [], "any": []}
-    }
-    for file_path, template in db_templates.items():
-        if not os.path.exists(file_path):
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(template, f, indent=4)
-            logger.info(f"Database {file_path} created successfully.")
-
-def fetch_db(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error reading {path}: {e}")
-        return {}
-
-def commit_db(path, data):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        logger.error(f"Error writing to {path}: {e}")
-
-# ==========================================
-# ۴. موتور تحلیل محتوای سمی (AI Toxic Guard)
-# ==========================================
-def ai_security_scan(text_content):
-    """آنالیز پیام توسط هوش مصنوعی برای حفظ سلامت محیط چت"""
-    if not text_content or len(text_content.strip()) < 1:
-        return 0.0
-    
-    # حذف نویزها برای دقت بالاتر در تشخیص فارسی و انگلیسی
-    processed_text = re.sub(r'[\.\-\_\/\+\=\(\)\]\[]', ' ', text_content)
-    
-    api_endpoint = "https://api-inference.huggingface.co/models/unitary/toxic-bert"
-    request_headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    
-    try:
-        req = requests.post(api_endpoint, headers=request_headers, json={"inputs": processed_text}, timeout=12)
-        if req.status_code == 200:
-            analysis_results = req.json()
-            if isinstance(analysis_results, list) and len(analysis_results) > 0:
-                for metric in analysis_results[0]:
-                    if metric['label'] == 'toxic':
-                        return metric['score']
-        return 0.0
-    except Exception as err:
-        logger.warning(f"AI Guard Connection Warning: {err}")
-        return 0.0
-
-# ==========================================
-# ۵. سیستم مدیریت وضعیت و کیبوردها
-# ==========================================
-def get_main_keyboard(user_id):
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add("🛰 شروع چت ناشناس", "👤 پروفایل من")
-    kb.add("🤫 لینک ناشناس", "💰 کیف پول و سکه")
-    kb.add("❓ راهنما و پشتیبانی", "🏆 برترین‌های هفته")
-    if str(user_id) == OWNER_ID:
-        kb.add("📊 کنترل پنل مدیریت", "📢 ارسال همگانی")
-    return kb
-
-def get_chatting_keyboard():
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    kb.add("🔚 پایان چت", "🚩 گزارش تخلف")
-    kb.add("🚫 بلاک و خروج", "👥 اشتراک آیدی")
-    return kb
-
-def get_gender_keyboard():
-    kb = types.InlineKeyboardMarkup()
-    kb.add(
-        types.InlineKeyboardButton("آقا 👦", callback_data="reg_sex_m"),
-        types.InlineKeyboardButton("خانم 👧", callback_data="reg_sex_f")
-    )
-    return kb
-
-# ==========================================
-# ۶. توابع کمکی و امنیتی
-# ==========================================
-def check_join_condition(uid):
-    if str(uid) == OWNER_ID: return True
-    try:
-        member = bot.get_chat_member(CHANNEL_ID, uid)
-        return member.status in ['member', 'administrator', 'creator']
-    except: return False
-
-def calculate_ban_expiry(uid):
-    blacklist = fetch_db(FILE_BLACKLIST)
-    if str(uid) in blacklist["banned"]:
-        info = blacklist["banned"][str(uid)]
-        if info['end'] == "permanent": return "perm", "همیشگی"
+class ShadowTitanBot:
+    def __init__(self):
+        # تنظیمات پایه
+        self.token = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"
+        self.owner = "8013245091"
+        self.channel = "@ChatNaAnnouncements"
+        self.hf_token = "Hf_YKgVObJxRxvxIXQWIKOEmGpcZxwehvCKqk"
         
-        target_date = datetime.datetime.fromisoformat(info['end'])
-        if datetime.datetime.now() < target_date:
-            diff = target_date - datetime.datetime.now()
-            h, r = divmod(int(diff.total_seconds()), 3600)
-            m = r // 60
-            return "temp", f"{h} ساعت و {m} دقیقه"
-        else:
-            del blacklist["banned"][str(uid)]
-            commit_db(FILE_BLACKLIST, blacklist)
-    return "free", None
-
-def apply_step_ban(uid):
-    users_db = fetch_db(FILE_USERS)
-    bans_db = fetch_db(FILE_BLACKLIST)
-    u_id = str(uid)
-    
-    users_db["users"][u_id]["ban_count"] += 1
-    count = users_db["users"][u_id]["ban_count"]
-    
-    if count == 1: dur = 120; label = "۲ ساعت"
-    elif count == 2: dur = 1440; label = "۲۴ ساعت"
-    else: dur = -1; label = "دائمی"
-    
-    expiry = (datetime.datetime.now() + datetime.timedelta(minutes=dur)).isoformat() if dur != -1 else "permanent"
-    bans_db["banned"][u_id] = {"end": expiry, "reason": "AI Content Violation", "at": str(datetime.datetime.now())}
-    
-    commit_db(FILE_USERS, users_db)
-    commit_db(FILE_BLACKLIST, bans_db)
-    return label
-
-# ==========================================
-# ۷. هسته پردازش منطقی پیام‌ها (Core Processor)
-# ==========================================
-@bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note', 'document'])
-def central_handler(message):
-    uid = str(message.chat.id)
-    initialize_all_databases()
-    
-    # الف) فیلتر بن و محدودیت دسترسی
-    ban_status, time_msg = calculate_ban_expiry(uid)
-    if ban_status != "free":
-        bot.send_message(uid, f"🚫 <b>دسترسی شما معلق شده است.</b>\nزمان باقی‌مانده: <code>{time_msg}</code>"); return
-
-    # ب) بررسی عضویت اجباری
-    if not check_join_condition(uid):
-        bot.send_message(uid, f"❌ برای استفاده از خدمات، ابتدا در کانال ما عضو شوید:\n{CHANNEL_ID}"); return
-
-    users_db = fetch_db(FILE_USERS)
-
-    # ج) مدیریت ثبت‌نام (Registration State Machine)
-    if uid not in users_db["users"]:
-        users_db["users"][uid] = {"state": "REGISTER_NAME", "warns": 0, "ban_count": 0, "partner": None, "coins": 10}
-        commit_db(FILE_USERS, users_db)
-        bot.send_message(uid, "👋 <b>به ربات شادو خوش آمدید!</b>\n\nبرای شروع، یک <b>نام مستعار</b> برای خود ارسال کنید:", reply_markup=types.ReplyKeyboardRemove())
-        return
-
-    curr_user = users_db["users"][uid]
-
-    # پردازش مراحل ثبت نام
-    if curr_user["state"] == "REGISTER_NAME":
-        if ai_security_scan(message.text) > 0.65:
-            bot.send_message(uid, "❌ این نام از نظر اخلاقی تایید نشد. نام دیگری بفرستید:"); return
-        curr_user["name"] = message.text[:20]
-        curr_user["state"] = "REGISTER_SEX"
-        commit_db(FILE_USERS, users_db)
-        bot.send_message(uid, f"خوش آمدی <b>{curr_user['name']}</b> عزیز. جنسیت خود را مشخص کن:", reply_markup=get_gender_keyboard())
-        return
-
-    if curr_user["state"] == "REGISTER_AGE":
-        if not message.text.isdigit() or not (12 <= int(message.text) <= 90):
-            bot.send_message(uid, "❌ سن باید عددی بین ۱۲ تا ۹۰ باشد. مجدداً وارد کنید:"); return
-        curr_user["age"] = int(message.text)
-        curr_user["state"] = "IDLE"
-        commit_db(FILE_USERS, users_db)
-        bot.send_message(uid, "🎉 <b>پروفایل شما تکمیل شد!</b>", reply_markup=get_main_keyboard(uid))
-        return
-
-    # د) موتور چت زنده (Live Transmission)
-    if curr_user.get("partner"):
-        partner_id = curr_user["partner"]
+        # راه‌اندازی ملزومات
+        self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
+        self.db = DatabaseManager()
+        self.anti_spam = {}
         
-        # دکمه‌های کنترلی حین چت
-        if message.text == "🔚 پایان چت":
-            markup = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله 🔚", callback_data="chat_stop_confirm"), types.InlineKeyboardButton("خیر 🔙", callback_data="chat_stop_cancel"))
-            bot.send_message(uid, "🤔 آیا مایل به قطع چت هستید؟", reply_markup=markup); return
-        
-        if message.text == "🚩 گزارش تخلف":
-            markup = types.InlineKeyboardMarkup(row_width=2).add(
-                types.InlineKeyboardButton("فحاشی 🤬", callback_data="rep_insult"),
-                types.InlineKeyboardButton("محتوای جنسی 🔞", callback_data="rep_nsfw"),
-                types.InlineKeyboardButton("مزاحمت ⛔️", callback_data="rep_harass"),
-                types.InlineKeyboardButton("انصراف ❌", callback_data="rep_none")
-            )
-            bot.send_message(uid, "دلیل گزارش شما چیست؟", reply_markup=markup); return
+        # ثبت تمام رویدادها
+        self.register_actions()
+        logger.info("Bot Engine Started Successfully.")
 
-        # آنتی‌توهین لحظه‌ای (AI Monitoring)
-        if message.text:
-            score = ai_security_scan(message.text)
-            if score > 0.85:
-                bot.delete_message(uid, message.message_id)
-                curr_user["warns"] += 1
-                commit_db(FILE_USERS, users_db)
-                
-                if curr_user["warns"] >= 3:
-                    lbl = apply_step_ban(uid)
-                    users_db = fetch_db(FILE_USERS) # Refresh data
-                    users_db["users"][partner_id]["partner"] = None
-                    curr_user["partner"] = None
-                    commit_db(FILE_USERS, users_db)
-                    bot.send_message(uid, f"🚫 شما به دلیل تکرار فحاشی برای <b>{lbl}</b> مسدود شدید.")
-                    bot.send_message(partner_id, "⚠️ چت به دلیل بن شدن طرف مقابل پایان یافت.", reply_markup=get_main_keyboard(partner_id))
-                    return
-                else:
-                    bot.send_message(uid, f"⚠️ <b>هشدار!</b> (اخطار {curr_user['warns']}/3)\nارسال الفاظ نامناسب ممنوع است."); return
-
-        # انتقال امن محتوا
+    # ------------------------------------------
+    # لایه تحلیل محتوا (AI & Security)
+    # ------------------------------------------
+    def ai_scan(self, text):
+        """تحلیل عمیق متن توسط مدل هوش مصنوعی Toxic-BERT"""
+        if not text or len(text.strip()) < 2: return 0.0
+        clean_text = re.sub(r'[^ا-یa-zA-Z0-9\s]', '', text)
+        url = "https://api-inference.huggingface.co/models/unitary/toxic-bert"
+        headers = {"Authorization": f"Bearer {self.hf_token}"}
         try:
-            bot.copy_message(partner_id, uid, message.message_id)
+            response = requests.post(url, headers=headers, json={"inputs": clean_text}, timeout=10)
+            if response.status_code == 200:
+                res_data = response.json()
+                if isinstance(res_data, list):
+                    for label in res_data[0]:
+                        if label['label'] == 'toxic': return label['score']
         except Exception as e:
-            logger.error(f"Forward failed from {uid} to {partner_id}: {e}")
-        return
+            logger.error(f"AI Connection Error: {e}")
+        return 0.0
 
-    # ه) مدیریت منوی اصلی
-    if message.text == "🛰 شروع چت ناشناس":
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(types.InlineKeyboardButton("آقا 👦", callback_data="hunt_m"), types.InlineKeyboardButton("خانم 👧", callback_data="hunt_f"), types.InlineKeyboardButton("فرقی نمی‌کند 🌈", callback_data="hunt_any"))
-        bot.send_message(uid, "🔍 مایل هستید با چه جنسیتی چت کنید؟", reply_markup=markup)
-    
-    elif message.text == "👤 پروفایل من":
-        bot.send_message(uid, f"👤 <b>اطلاعات پروفایل:</b>\n\n🏷 نام: {curr_user.get('name')}\n⚧ جنسیت: {curr_user.get('gender', 'نامشخص')}\n🔢 سن: {curr_user.get('age', 'نامشخص')}\n⚠️ اخطارها: {curr_user['warns']}\n🚫 سابقه بن: {curr_user['ban_count']}\n💰 سکه: {curr_user['coins']}")
+    # ------------------------------------------
+    # سیستم‌های کیبورد (UI/UX Layer)
+    # ------------------------------------------
+    def get_kb_main(self, uid):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("🛰 شروع چت ناشناس", "👤 پروفایل من")
+        markup.add("🎡 گردونه شانس روزانه", "🏆 برترین‌ها")
+        markup.add("❓ راهنما و قوانین", "⚙ تنظیمات")
+        if str(uid) == self.owner:
+            markup.add("📊 پنل مدیریت مرکزی", "📢 ارسال همگانی")
+        return markup
 
-    elif message.text == "📊 کنترل پنل مدیریت" and uid == OWNER_ID:
-        config = fetch_db(FILE_CONFIG)
-        bot.send_message(uid, f"⚙ <b>پنل مدیریت مرکزی:</b>\n\nکل کاربران: {len(users_db['users'])}\nچت‌های انجام شده: {config['stats']['total_chats']}\nتشخیص‌های AI: {config['stats']['ai_blocks']}")
+    def get_kb_chatting(self):
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("🔚 پایان گفتگو", "🚩 گزارش تخلف")
+        markup.add("🚫 بلاک و خروج", "👥 درخواست آیدی")
+        return markup
 
-# ==========================================
-# ۸. مدیریت رویدادهای کلیکی (Callback Queries)
-# ==========================================
-@bot.callback_query_handler(func=lambda call: True)
-def query_processor(call):
-    uid = str(call.message.chat.id)
-    users_db = fetch_db(FILE_USERS)
-    queue_db = fetch_db(FILE_QUEUE)
-    
-    # عملیات ثبت نام
-    if call.data.startswith("reg_sex_"):
-        gender = "آقا" if "m" in call.data else "خانم"
-        users_db["users"][uid]["gender"] = gender
-        users_db["users"][uid]["state"] = "REGISTER_AGE"
-        commit_db(FILE_USERS, users_db)
-        bot.edit_message_text("🔢 بسیار خب، حالا <b>سن</b> خود را به عدد وارد کن:", uid, call.message.id)
+    def get_kb_gender(self):
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("آقا 👦", callback_data="reg_sex_m"),
+                   types.InlineKeyboardButton("خانم 👧", callback_data="reg_sex_f"))
+        return markup
 
-    # عملیات جستجو و Matchmaking
-    elif call.data.startswith("hunt_"):
-        bot.edit_message_text("🔍 در حال جستجوی هم‌صحبت... لطفاً از برنامه خارج نشوید.", uid, call.message.id)
-        q_list = queue_db["any"]
-        if uid not in q_list:
-            q_list.append(uid)
-            commit_db(FILE_QUEUE, queue_db)
+    # ------------------------------------------
+    # لایه پردازش پیام‌ها و وضعیت‌ها
+    # ------------------------------------------
+    def register_actions(self):
         
-        # الگوریتم تطبیق Titan
-        potentials = [p for p in q_list if p != uid]
-        if potentials:
-            partner = potentials[0]
-            q_list.remove(partner); q_list.remove(uid)
-            users_db["users"][uid]["partner"] = partner
-            users_db["users"][partner]["partner"] = partner # اصلاح منطق اتصال
-            # (در نسخه نهایی تمام فیلدها اصلاح شده است)
-            users_db["users"][uid]["partner"] = partner
-            users_db["users"][partner]["partner"] = uid
+        @self.bot.message_handler(commands=['start'])
+        def welcome(message):
+            uid = str(message.chat.id)
+            db_u = self.db.read("users")
             
-            commit_db(FILE_QUEUE, queue_db)
-            commit_db(FILE_USERS, users_db)
-            
-            bot.send_message(uid, "💎 <b>متصل شدید!</b>\nمی‌توانید گفتگو را شروع کنید.", reply_markup=get_chatting_keyboard())
-            bot.send_message(partner, "💎 <b>متصل شدید!</b>\nمی‌توانید گفتگو را شروع کنید.", reply_markup=get_chatting_keyboard())
+            if uid not in db_u["users"]:
+                db_u["users"][uid] = {
+                    "state": "STEP_NAME", "name": "نامشخص", "sex": "نامشخص",
+                    "age": 0, "warns": 0, "ban_count": 0, "partner": None,
+                    "score": 10, "last_spin": "", "level": 1
+                }
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "👋 <b>به ربات بزرگ چت ناشناس شادو خوش آمدید!</b>\n\nبرای شروع، لطفاً <b>نام مستعار</b> خود را بفرستید:", reply_markup=types.ReplyKeyboardRemove())
+            else:
+                self.bot.send_message(uid, "شما عضو هستید. از منوی زیر استفاده کنید:", reply_markup=self.get_kb_main(uid))
 
-    # پایان گفتگو
-    elif call.data == "chat_stop_confirm":
-        p_id = users_db["users"][uid]["partner"]
-        users_db["users"][uid]["partner"] = None
-        users_db["users"][p_id]["partner"] = None
-        commit_db(FILE_USERS, users_db)
-        bot.send_message(uid, "👋 چت پایان یافت.", reply_markup=get_main_keyboard(uid))
-        bot.send_message(p_id, "⚠️ هم‌صحبت چت را ترک کرد.", reply_markup=get_main_keyboard(p_id))
+        @self.bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
+        def central_logic(message):
+            uid = str(message.chat.id)
+            db_u = self.db.read("users")
+            db_b = self.db.read("bans")
+            
+            # 1. فیلتر مسدودیت
+            if uid in db_b["blacklist"]:
+                self.bot.send_message(uid, "🚫 حساب شما مسدود است."); return
+            
+            # 2. فیلتر عضویت
+            try:
+                if str(uid) != self.owner:
+                    s = self.bot.get_chat_member(self.channel, uid).status
+                    if s not in ['member', 'administrator', 'creator']:
+                        self.bot.send_message(uid, f"❌ عضویت در کانال الزامی است:\n{self.channel}"); return
+            except: pass
+
+            # 3. مدیریت وضعیت‌های ثبت‌نام
+            user = db_u["users"].get(uid)
+            if not user: return
+
+            if user["state"] == "STEP_NAME":
+                if self.ai_scan(message.text) > 0.7:
+                    self.bot.send_message(uid, "❌ نام نامناسب رد شد. نام دیگری بفرستید:"); return
+                user["name"] = message.text[:20]; user["state"] = "STEP_SEX"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, f"خوش آمدی <b>{user['name']}</b>. جنسیت خودت رو انتخاب کن:", reply_markup=self.get_kb_gender()); return
+
+            if user["state"] == "STEP_AGE":
+                if not message.text.isdigit() or not (12 <= int(message.text) <= 99):
+                    self.bot.send_message(uid, "❌ سن باید عددی بین ۱۲ تا ۹۹ باشد:"); return
+                user["age"] = int(message.text); user["state"] = "IDLE"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "✅ پروفایل شما با موفقیت تایید شد!", reply_markup=self.get_kb_main(uid)); return
+
+            # 4. موتور چت فعال (Live Chat Core)
+            if user.get("partner"):
+                pid = user["partner"]
+                
+                # مدیریت دکمه‌های حین چت
+                if message.text == "🔚 پایان گفتگو":
+                    m = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("بله 🔚", callback_data="chat_end_y"), types.InlineKeyboardButton("خیر 🔙", callback_data="chat_end_n"))
+                    self.bot.send_message(uid, "❓ آیا از قطع این گفتگو اطمینان دارید؟", reply_markup=m); return
+
+                # آنالیز هوش مصنوعی پیام‌های متنی
+                if message.text:
+                    if self.ai_scan(message.text) > 0.85:
+                        self.bot.delete_message(uid, message.message_id)
+                        user["warns"] += 1; self.db.write("users", db_u)
+                        if user["warns"] >= 3:
+                            self.auto_ban_user(uid, pid)
+                            return
+                        self.bot.send_message(uid, f"⚠️ اخطار {user['warns']}/3! فحاشی ممنوع است."); return
+
+                # انتقال پیام به هم‌صحبت
+                try:
+                    self.bot.copy_message(pid, uid, message.message_id)
+                except: pass
+                return
+
+            # 5. مدیریت دکمه‌های منوی اصلی
+            self.handle_main_menu(message, uid, user, db_u)
+
+    def handle_main_menu(self, message, uid, user, db_u):
+        if message.text == "🛰 شروع چت ناشناس":
+            m = types.InlineKeyboardMarkup(row_width=2)
+            m.add(types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
+                  types.InlineKeyboardButton("خانم 👧", callback_data="find_f"),
+                  types.InlineKeyboardButton("فرقی نمی‌کند 🌈", callback_data="find_any"))
+            self.bot.send_message(uid, "🔍 دنبال چه کسی هستی؟", reply_markup=m)
+
+        elif message.text == "👤 پروفایل من":
+            msg = (f"👤 <b>اطلاعات کاربری:</b>\n\n🏷 نام: {user['name']}\n⚧ جنسیت: {user['sex']}\n"
+                   f"🔢 سن: {user['age']}\n🏆 امتیاز: {user['score']}\n⚠️ اخطارها: {user['warns']}")
+            self.bot.send_message(uid, msg)
+
+        elif message.text == "🎡 گردونه شانس روزانه":
+            today = str(datetime.date.today())
+            if user["last_spin"] == today:
+                self.bot.send_message(uid, "❌ شما امروز شانس خود را امتحان کرده‌اید!"); return
+            win = random.choice([5, 10, 20, -5, 0])
+            user["score"] += win; user["last_spin"] = today; self.db.write("users", db_u)
+            self.bot.send_message(uid, f"🎡 گردونه چرخید و شما **{win}** امتیاز گرفتید!")
+
+        elif message.text == "📊 پنل مدیریت مرکزی" and uid == self.owner:
+            total = len(db_u["users"])
+            self.bot.send_message(uid, f"⚙ <b>آمار کل سیستم:</b>\n\nتعداد کاربران: {total}\nوضعیت سرور: پایدار")
+
+    # ------------------------------------------
+    # بخش مدیریت رویدادهای کلیکی (Callbacks)
+    # ------------------------------------------
+    def auto_ban_user(self, uid, pid):
+        db_u = self.db.read("users"); db_b = self.db.read("bans")
+        db_b["blacklist"][str(uid)] = {"reason": "AI Content Policy", "date": str(datetime.datetime.now())}
+        db_u["users"][str(uid)]["partner"] = None; db_u["users"][str(pid)]["partner"] = None
+        self.db.write("users", db_u); self.db.write("bans", db_b)
+        self.bot.send_message(uid, "🚫 شما به دلیل نقض مکرر قوانین مسدود شدید.")
+        self.bot.send_message(pid, "⚠️ هم‌صحبت به دلیل تخلف مسدود شد.", reply_markup=self.get_kb_main(pid))
+
+    def init_callbacks(self):
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def callback_handler(call):
+            uid = str(call.message.chat.id)
+            db_u = self.db.read("users"); db_q = self.db.read("queue")
+            
+            if call.data.startswith("reg_sex_"):
+                db_u["users"][uid]["sex"] = "آقا" if "m" in call.data else "خانم"
+                db_u["users"][uid]["state"] = "STEP_AGE"
+                self.db.write("users", db_u)
+                self.bot.edit_message_text("🔢 حالا <b>سن</b> خود را وارد کنید:", uid, call.message.id)
+
+            elif call.data.startswith("find_"):
+                self.bot.edit_message_text("🔍 در حال جستجوی هم‌صحبت...", uid, call.message.id)
+                q = db_q["any"]
+                if uid not in q: q.append(uid); self.db.write("queue", db_q)
+                
+                pots = [p for p in q if p != uid]
+                if pots:
+                    partner = pots[0]; q.remove(partner); q.remove(uid)
+                    db_u["users"][uid]["partner"] = partner; db_u["users"][partner]["partner"] = uid
+                    self.db.write("users", db_u); self.db.write("queue", db_q)
+                    self.bot.send_message(uid, "💎 متصل شدید! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
+                    self.bot.send_message(partner, "💎 متصل شدید! چت را شروع کنید.", reply_markup=self.get_kb_chatting())
+
+            elif call.data == "chat_end_y":
+                p_id = db_u["users"][uid]["partner"]
+                db_u["users"][uid]["partner"] = None; db_u["users"][p_id]["partner"] = None
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "👋 چت پایان یافت.", reply_markup=self.get_kb_main(uid))
+                self.bot.send_message(p_id, "⚠️ هم‌صحبت چت را ترک کرد.", reply_markup=self.get_kb_main(p_id))
+
+    def run(self):
+        self.init_callbacks()
+        print("--- Shadow Titan v13.0 Running ---")
+        self.bot.infinity_polling()
 
 # ==========================================
-# ۹. نقطه شروع نهایی (Main Entry Point)
+# 4. نقطه ورود نهایی (Main Entry)
 # ==========================================
 if __name__ == "__main__":
-    initialize_all_databases()
-    start_server()
-    logger.info("Shadow Sovereign Engine Initialized.")
-    print("Bot is Polling...")
-    bot.infinity_polling()
+    Thread(target=run_web_server).start()
+    titan = ShadowTitanBot()
+    titan.run()
