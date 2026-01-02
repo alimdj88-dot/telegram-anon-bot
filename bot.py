@@ -1645,11 +1645,12 @@ class ShadowTitanBot:
                 self.bot.send_message(uid, missions_text)
                 self.bot.answer_callback_query(call.id, "✅ لیست ارسال شد")
 
-                        elif call.data == "add_new_mission":
+                                    elif call.data == "add_new_mission":
                 if uid != self.owner:
                     return
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
+    # این تابع باید از بلاک callback و register_handlers خارج شده و تراز با بقیه متدها باشد
     def run(self):
         """اجرای ربات"""
         print("=" * 50)
@@ -1657,7 +1658,6 @@ class ShadowTitanBot:
         print("Bot is starting...")
         print("=" * 50)
         
-        # اجرای وب‌سرور برای جلوگیری از Sleep شدن
         try:
             server_thread = Thread(target=run_web)
             server_thread.daemon = True
@@ -1666,7 +1666,6 @@ class ShadowTitanBot:
         except Exception as e:
             logger.error(f"Web Server Error: {e}")
 
-        # شروع دریافت پیام‌ها از تلگرام
         try:
             print("🚀 Connecting to Telegram...")
             self.bot.infinity_polling(skip_pending=True)
