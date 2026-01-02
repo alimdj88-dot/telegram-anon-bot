@@ -1651,8 +1651,8 @@ class ShadowTitanBot:
                 
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
-          def run(self):
-        
+              def run(self):
+        """اجرای ربات"""
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
         print("Bot is starting...")
@@ -1663,16 +1663,19 @@ class ShadowTitanBot:
             server_thread = Thread(target=run_web)
             server_thread.daemon = True
             server_thread.start()
+            print("✅ Web Server started on port 8080")
         except Exception as e:
             logger.error(f"Web Server Error: {e}")
 
         # شروع دریافت پیام‌ها از تلگرام
         try:
+            print("🚀 Connecting to Telegram...")
             self.bot.infinity_polling(skip_pending=True)
         except Exception as e:
             logger.error(f"Polling Error: {e}")
+            print(f"❌ Polling Error: {e}")
 
-# این بخش باید کاملاً چسبیده به سمت چپ باشد (بدون فاصله)
+# این بخش باید کاملاً چسبیده به سمت چپ باشد (بدون هیچ فاصله‌ای)
 if __name__ == "__main__":
     bot_instance = ShadowTitanBot()
     bot_instance.run()
