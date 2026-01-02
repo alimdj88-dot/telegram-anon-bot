@@ -1059,7 +1059,8 @@ class ShadowTitanBot:
                     safe_send(bot, int(uid), f"🎉 VIP کریسمس (۳ ماهه) فعال شد — دلیل: ویژه کریسمس 🎄\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
                     return
 
-                if data.startswith("manual|"):
+                if data.startswith("something"):
+    do_something()
     try:
         payload = data.split("|", 1)[1]
         payments = db.read("payments")
