@@ -217,52 +217,63 @@ class ShadowTitanBot:
             logger.error(f"خطا در AI NSFW scan: {e}")
         return 0.0
 
-   def add_vip(self, uid, duration_key, reason="گیفت"):
-    """افزودن VIP"""
-    db_u = self.db.read("users")
-    if uid not in db_u["users"]:
-        return False
-    now = datetime.datetime.now().timestamp()
-    current_end = db_u["users"][uid].get("vip_end", 0)
-    new_end = max(current_end, now) + self.vip_durations[duration_key]
-    db_u["users"][uid]["vip_end"] = new_end
-    self.db.write("users", db_u)  # ذخیره تغییرات در پایگاه داده
-    
-    try:
-        end_date = datetime.datetime.fromtimestamp(new_end).strftime("%Y-%m-%d")
-        duration_name = {
-            "week": "۱ هفته",
-            "month": "۱ ماه",
-            "3month": "۳ ماه",
-            "6month": "۶ ماه",
-            "year": "۱ سال"
-        }[duration_key]
-        self.bot.send_message(uid, f"🎉 <b>تبریک! رنک VIP دریافت کردید</b>\n\n"
-                                   f"مدت: {duration_name}\n"
-                                   f"تا تاریخ: {end_date}\n"
-                                   f"دلیل: {reason}\n\nمبارک باشد ✨")
-    except Exception as e:
-        logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
-    return True
+    def is_vip(self, uid):
+        """بررسی VIP بودن"""
+        db_u = self.db.read("users")
+        user = db_u["users"].get(uid, {})
+        vip_end = user.get("vip_end", 0)
+        return vip_end > datetime.datetime.now().timestamp()
 
-    
+    def add_vip(self, uid, duration_key, reason="گیفت"):
+        """افزودن VIP"""
+        db_u = self.db.read("users")
+        if uid not in db_u["users"]:
+            return False
+        now = datetime.datetime.now().timestamp()
+        current_end = db_u["users"][uid].get("vip_end", 0)
+        new_end = max(current_end, now) + self.vip_durations[duration_key]
+        db_u["users"][uid]["vip_end"] = new_end
+        self.db.write("users", db_u)
         
-        def add_coins(self, uid, amount, reason=""):
-    """افزودن سکه"""
-    db_u = self.db.read("users")
-    if uid not in db_u["users"]:
-        return False
-    db_u["users"][uid]["coins"] = db_u["users"][uid].get("coins", 0) + amount
-    self.db.write("users", db_u)  # ذخیره تغییرات در پایگاه داده
-    
-    try:
-        self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
-                                   f"مقدار: {amount:,} سکه\n"
-                                   f"دلیل: {reason}\n"
-                                   f"موجودی: {db_u['users'][uid]['coins']:,} سکه")
-    except Exception as e:
-        logger.error(f"خطا در ارسال پیام سکه به {uid}: {e}")
-    return True
+        try:
+            end_date = datetime.datetime.fromtimestamp(new_end).strftime("%Y-%m-%d")
+            duration_name = {
+                "week": "۱ هفته",
+                "month": "۱ ماه",
+                "3month": "۳ ماه",
+                "6month": "۶ ماه",
+                "year": "۱ سال"
+            }[duration_key]
+            self.bot.send_message(uid, f"🎉 <b>تبریک! رنک VIP دریافت کردید</b>\n\n"
+                                       f"مدت: {duration_name}\n"
+                                       f"تا تاریخ: {end_date}\n"
+                                       f"دلیل: {reason}\n\nمبارک باشد ✨")
+        except Exception as e:
+            logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
+        return True
+
+    def add_coins(self, uid, amount, reason=""):
+        """افزودن سکه"""
+        db_u = self.db.read("users")
+        if uid not in db_u["users"]:
+            return False
+        
+        # اطمینان از وجود کلید coins
+        if "coins" not in db_u["users"][uid]:
+            db_u["users"][uid]["coins"] = 0
+        
+        db_u["users"][uid]["coins"] += amount
+        self.db.write("users", db_u)
+        
+        try:
+            self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
+                                       f"مقدار: {amount:,} سکه\n"
+                                       f"دلیل: {reason}\n"
+                                       f"موجودی: {db_u['users'][uid]['coins']:,} سکه")
+        except Exception as e:
+            logger.error(f"خطا در ارسال پیام سکه به {uid}: {e}")
+        
+        return True
 
     def check_and_reward_mission(self, uid):
         """بررسی و پاداش ماموریت روزانه"""
@@ -811,6 +822,13 @@ class ShadowTitanBot:
                 self.bot.send_message(uid, "🔍 دنبال چه کسی می‌گردید؟", reply_markup=kb)
 
             elif text == "👤 پروفایل من":
+                # بارگیری دیتابیس تازه
+                db_u = self.db.read("users")
+                user = db_u["users"].get(uid)
+                
+                if not user:
+                    return
+                
                 # شمارش برای ماموریت
                 user["daily_profile_views"] = user.get("daily_profile_views", 0) + 1
                 self.db.write("users", db_u)
@@ -819,13 +837,16 @@ class ShadowTitanBot:
                 vip_end = user.get("vip_end", 0)
                 vip_status = f"تا {datetime.datetime.fromtimestamp(vip_end).strftime('%Y-%m-%d')}" if self.is_vip(uid) else "ندارید"
                 
+                # اطمینان از وجود coins
+                coins = user.get("coins", 0)
+                
                 profile_text = f"<b>👤 پروفایل شما</b>\n\n"
                 profile_text += f"نام: {user.get('name', 'نامشخص')}\n"
                 profile_text += f"جنسیت: {user.get('sex', 'نامشخص')}\n"
                 profile_text += f"سن: {user.get('age', 'نامشخص')}\n"
                 profile_text += f"رنک: {rank}\n"
                 profile_text += f"VIP: {vip_status}\n"
-                profile_text += f"💰 سکه: {user.get('coins', 0):,}\n"
+                profile_text += f"💰 سکه: {coins:,}\n"
                 profile_text += f"👥 رفرال: {user.get('total_referrals', 0)} نفر\n"
                 profile_text += f"⚠️ اخطار: {user.get('warns', 0)}/3"
                 
@@ -1285,7 +1306,11 @@ class ShadowTitanBot:
                         if target_uid in db_u["users"]:
                             success = self.add_coins(target_uid, amount, reason)
                             if success:
-                                self.bot.send_message(uid, f"✅ {amount:,} سکه به {target_uid} اهدا شد", 
+                                # بارگیری مجدد دیتابیس برای نمایش به‌روز
+                                db_u = self.db.read("users")
+                                user = db_u["users"].get(uid)
+                                self.bot.send_message(uid, f"✅ {amount:,} سکه به {target_uid} اهدا شد\n"
+                                                         f"موجودی جدید کاربر: {db_u['users'][target_uid].get('coins', 0):,} سکه", 
                                                     reply_markup=self.kb_admin())
                             else:
                                 self.bot.send_message(uid, "❌ خطا در اهدا سکه")
@@ -1645,7 +1670,6 @@ class ShadowTitanBot:
                     return
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
-    # این تابع باید از بلاک callback و register_handlers خارج شده و تراز با بقیه متدها باشد
     def run(self):
         """اجرای ربات"""
         print("=" * 50)
