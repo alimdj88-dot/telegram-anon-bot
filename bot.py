@@ -1651,34 +1651,28 @@ class ShadowTitanBot:
                 
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
-       def run(self):
+          def run(self):
         """اجرای ربات"""
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
-        print("با سیستم ماموریت، رفرال و خرید VIP فعال شد.")
+        print("Bot is starting...")
         print("=" * 50)
         
-        # اجرای وب‌سرور در پس‌زمینه (برای اینکه ربات روی هاست نخوابد)
+        # اجرای وب‌سرور برای جلوگیری از Sleep شدن در هاست‌هایی مثل Render
         try:
-            server_thread = threading.Thread(target=run_web)
+            server_thread = Thread(target=run_web)
             server_thread.daemon = True
             server_thread.start()
-            print("✅ Web Server started on port 8080")
         except Exception as e:
             logger.error(f"Web Server Error: {e}")
 
-        # اتصال به تلگرام
+        # شروع دریافت پیام‌ها از تلگرام
         try:
-            print("🚀 Bot is connecting to Telegram...")
-            # این دستور ربات را روشن نگه می‌دارد
             self.bot.infinity_polling(skip_pending=True)
         except Exception as e:
             logger.error(f"Polling Error: {e}")
-            print(f"❌ Error: {e}")
 
-# ==========================================
-# اجرای برنامه (نقطه شروع)
-# ==========================================
+# این بخش باید کاملاً چسبیده به سمت چپ باشد (بدون فاصله)
 if __name__ == "__main__":
-    shadow_bot = ShadowTitanBot()
-    shadow_bot.run()
+    bot_instance = ShadowTitanBot()
+    bot_instance.run()
