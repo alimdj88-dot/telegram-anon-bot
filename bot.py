@@ -1,3 +1,6 @@
+# Shadow Titan Bot - نسخه کامل بدون باگ با سیستم ماموریت و رفرال
+
+```python
 import telebot
 from telebot import types
 import json
@@ -599,8 +602,7 @@ class ShadowTitanBot:
 
             # مرحله سن
             if user.get("state") == "age":
-                if msg.content_```python
-type != "text" or not msg.text.isdigit():
+                if msg.content_type != "text" or not msg.text.isdigit():
                     self.bot.send_message(uid, "❌ لطفاً فقط عدد وارد کنید")
                     return
                 age = int(msg.text)
@@ -1096,8 +1098,7 @@ type != "text" or not msg.text.isdigit():
                         self.bot.send_message(uid, "❌ هیچ کاربر VIP فعال وجود ندارد")
                     else:
                         vip_text = "<b>📋 لیست کاربران VIP فعال</b>\n\n"
-                        for v in active```python
-_vips[:50]:  # محدود به 50 نفر اول
+                        for v in active_vips[:50]:  # محدود به 50 نفر اول
                             name = db_u["users"][v].get("name", "نامشخص")
                             end_date = datetime.datetime.fromtimestamp(
                                 db_u["users"][v].get("vip_end", 0)
@@ -1657,4 +1658,4 @@ _vips[:50]:  # محدود به 50 نفر اول
         """اجرای ربات"""
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
-        print("با سیستم ماموریت، رفرال و خرید VIP با
+        print("با سیستم ماموریت، رفرال و خرید VIP با") 
