@@ -259,10 +259,9 @@ class ShadowTitanBot:
     db_u = self.db.read("users")
     if uid not in db_u["users"]:
         return False
-    # Adding the coins to the user's account
     db_u["users"][uid]["coins"] = db_u["users"][uid].get("coins", 0) + amount
-    self.db.write("users", db_u)
-
+    self.db.write("users", db_u)  # ذخیره تغییرات در پایگاه داده
+    
     try:
         self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
                                    f"مقدار: {amount:,} سکه\n"
