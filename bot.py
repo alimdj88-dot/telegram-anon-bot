@@ -1059,39 +1059,44 @@ class ShadowTitanBot:
                     safe_send(bot, int(uid), f"🎉 VIP کریسمس (۳ ماهه) فعال شد — دلیل: ویژه کریسمس 🎄\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
                     return
 
-                if data.startswith("something"):
-    do_something()
-    try:
-        payload = data.split("|", 1)[1]
-        payments = db.read("payments")
-        pay = payments.get(payload)
+                # اعلام پرداخت دستی (دکمه‌ی "manual|<payload>")
+                if data.startswith("manual|"):
+                    try:
+                        payload = data.split("|", 1)[1]
+                        payments = db.read("payments")
+                        pay = payments.get(payload)
 
-        if not pay:
-            bot.answer_callback_query(call.id, "پرداخت نامشخص")
-            return
+                        if not pay:
+                            bot.answer_callback_query(call.id, "پرداخت نامشخص")
+                            return
 
-        safe_send(
-            bot,
-            int(self.owner),
-            f"اعلام پرداخت دستی\n"
-            f"از: {uid}\n"
-            f"کد پرداخت: {payload}\n"
-            f"مبلغ: {pay.get('amount')}\n"
-            f"پلن: {pay.get('plan')}\n\n"
-            f"برای تایید:\n/confirm_manual {payload}"
-        )
+                        safe_send(
+                            bot,
+                            int(self.owner),
+                            f"اعلام پرداخت دستی\n"
+                            f"از: {uid}\n"
+                            f"کد پرداخت: {payload}\n"
+                            f"مبلغ: {pay.get('amount')}\n"
+                            f"پلن: {pay.get('plan')}\n\n"
+                            f"برای تایید:\n/confirm_manual {payload}"
+                        )
 
-        bot.answer_callback_query(call.id, "اعلام پرداخت ارسال شد ✅")
-        return
+                        try:
+                            bot.answer_callback_query(call.id, "اعلام پرداخت ارسال شد ✅")
+                        except:
+                            # اگر answer_callback_query هم شکست خورد، صرفاً ردش کن
+                            pass
 
-    except Exception as e:
-        logger.error("manual payment callback error: %s", e)
-        logger.debug(traceback.format_exc())
-        try:
-            bot.answer_callback_query(call.id, "❌ خطا در اعلام پرداخت")
-        except:
-            pass
-        return
+                        return
+
+                    except Exception as e:
+                        logger.error("manual payment callback error: %s", e)
+                        logger.debug(traceback.format_exc())
+                        try:
+                            bot.answer_callback_query(call.id, "❌ خطا در اعلام پرداخت")
+                        except:
+                            pass
+                        return
        
 if __name__ == "__main__":
     try:
