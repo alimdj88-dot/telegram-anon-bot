@@ -1652,7 +1652,7 @@ class ShadowTitanBot:
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
           def run(self):
-        """اجرای ربات"""
+        
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
         print("Bot is starting...")
