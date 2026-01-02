@@ -217,40 +217,33 @@ class ShadowTitanBot:
             logger.error(f"خطا در AI NSFW scan: {e}")
         return 0.0
 
-    def is_vip(self, uid):
-        """بررسی VIP بودن"""
-        db_u = self.db.read("users")
-        user = db_u["users"].get(uid, {})
-        vip_end = user.get("vip_end", 0)
-        return vip_end > datetime.datetime.now().timestamp()
-
-    def add_vip(self, uid, duration_key, reason="گیفت"):
-        """افزودن VIP"""
-        db_u = self.db.read("users")
-        if uid not in db_u["users"]:
-            return False
-        now = datetime.datetime.now().timestamp()
-        current_end = db_u["users"][uid].get("vip_end", 0)
-        new_end = max(current_end, now) + self.vip_durations[duration_key]
-        db_u["users"][uid]["vip_end"] = new_end
-        self.db.write("users", db_u)
-        
-        try:
-            end_date = datetime.datetime.fromtimestamp(new_end).strftime("%Y-%m-%d")
-            duration_name = {
-                "week": "۱ هفته",
-                "month": "۱ ماه",
-                "3month": "۳ ماه",
-                "6month": "۶ ماه",
-                "year": "۱ سال"
-            }[duration_key]
-            self.bot.send_message(uid, f"🎉 <b>تبریک! رنک VIP دریافت کردید</b>\n\n"
-                                       f"مدت: {duration_name}\n"
-                                       f"تا تاریخ: {end_date}\n"
-                                       f"دلیل: {reason}\n\nمبارک باشد ✨")
-        except Exception as e:
-            logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
-        return True
+   def add_vip(self, uid, duration_key, reason="گیفت"):
+    """افزودن VIP"""
+    db_u = self.db.read("users")
+    if uid not in db_u["users"]:
+        return False
+    now = datetime.datetime.now().timestamp()
+    current_end = db_u["users"][uid].get("vip_end", 0)
+    new_end = max(current_end, now) + self.vip_durations[duration_key]
+    db_u["users"][uid]["vip_end"] = new_end
+    self.db.write("users", db_u)  # ذخیره تغییرات در پایگاه داده
+    
+    try:
+        end_date = datetime.datetime.fromtimestamp(new_end).strftime("%Y-%m-%d")
+        duration_name = {
+            "week": "۱ هفته",
+            "month": "۱ ماه",
+            "3month": "۳ ماه",
+            "6month": "۶ ماه",
+            "year": "۱ سال"
+        }[duration_key]
+        self.bot.send_message(uid, f"🎉 <b>تبریک! رنک VIP دریافت کردید</b>\n\n"
+                                   f"مدت: {duration_name}\n"
+                                   f"تا تاریخ: {end_date}\n"
+                                   f"دلیل: {reason}\n\nمبارک باشد ✨")
+    except Exception as e:
+        logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
+    return True
 
     
         
