@@ -1645,20 +1645,19 @@ class ShadowTitanBot:
                 self.bot.send_message(uid, missions_text)
                 self.bot.answer_callback_query(call.id, "✅ لیست ارسال شد")
 
-            elif call.data == "add_new_mission":
+                        elif call.data == "add_new_mission":
                 if uid != self.owner:
                     return
-                
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
 
-              def run(self):
+    def run(self):
         """اجرای ربات"""
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
         print("Bot is starting...")
         print("=" * 50)
         
-        # اجرای وب‌سرور برای جلوگیری از Sleep شدن در هاست‌هایی مثل Render
+        # اجرای وب‌سرور برای جلوگیری از Sleep شدن
         try:
             server_thread = Thread(target=run_web)
             server_thread.daemon = True
@@ -1675,7 +1674,6 @@ class ShadowTitanBot:
             logger.error(f"Polling Error: {e}")
             print(f"❌ Polling Error: {e}")
 
-# این بخش باید کاملاً چسبیده به سمت چپ باشد (بدون هیچ فاصله‌ای)
 if __name__ == "__main__":
     bot_instance = ShadowTitanBot()
     bot_instance.run()
