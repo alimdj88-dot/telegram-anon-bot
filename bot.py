@@ -1060,20 +1060,37 @@ class ShadowTitanBot:
                     return
 
                 if data.startswith("manual|"):
-                    payload = data.split("|", 1)[1]
-                    payments = db.read("payments")
-                    pay = payments.get(payload)
-                    if not pay:
-                        bot.answer_callback_query(call.id, "پرداخت نامشخص")
-                        return
-                    safe_send(bot, int(self.owner), f"اعلام پرداخت دستی از {uid}\nکد: {payload}\nمبلغ: {pay.get('amount')}\nپلن: {pay.get('plan')}\nبرای تایید: /confirm_manual {payload}")
-                    except Exception as e:
-        logger.error("callback_handler error: %s", e)
+    try:
+        payload = data.split("|", 1)[1]
+        payments = db.read("payments")
+        pay = payments.get(payload)
+
+        if not pay:
+            bot.answer_callback_query(call.id, "پرداخت نامشخص")
+            return
+
+        safe_send(
+            bot,
+            int(self.owner),
+            f"اعلام پرداخت دستی\n"
+            f"از: {uid}\n"
+            f"کد پرداخت: {payload}\n"
+            f"مبلغ: {pay.get('amount')}\n"
+            f"پلن: {pay.get('plan')}\n\n"
+            f"برای تایید:\n/confirm_manual {payload}"
+        )
+
+        bot.answer_callback_query(call.id, "اعلام پرداخت ارسال شد ✅")
+        return
+
+    except Exception as e:
+        logger.error("manual payment callback error: %s", e)
         logger.debug(traceback.format_exc())
         try:
-            bot.answer_callback_query(call.id, "❌ خطای داخلی")
+            bot.answer_callback_query(call.id, "❌ خطا در اعلام پرداخت")
         except:
             pass
+        return
        
 if __name__ == "__main__":
     try:
