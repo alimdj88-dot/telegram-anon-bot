@@ -1,3 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Shadow Titan - complete fixed version
+Features:
+ - Registration (name/sex/age)
+ - Anonymous chat matching (queue)
+ - Anonymous messages via start payload
+ - VIP plans (Stars/XTR) + Xmas free 3-month limited window
+ - Payments (invoice + manual fallback)
+ - Admin panel actions (basic)
+ - Profanity detection robust (normalization)
+ - HF moderation hooks (optional)
+ - Persistent JSON DB with locking
+ - Safe send wrapper, backups, basic housekeeping
+"""
+
 import os
 import sys
 import json
@@ -8,10 +25,10 @@ import logging
 import threading
 import datetime
 import re
-import csv
 import traceback
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 
+# Optional: run a tiny web server to keep bot alive on some hosts (Heroku-like)
 try:
     from flask import Flask
     FLASK_AVAILABLE = True
@@ -22,54 +39,49 @@ try:
     import telebot
     from telebot import types
 except Exception:
-    print("pyTelegramBotAPI (telebot) required. pip install pyTelegramBotAPI")
+    print("pyTelegramBotAPI required. Install: pip install pyTelegramBotAPI")
     raise
 
 try:
     import requests
 except Exception:
-    print("requests required. pip install requests")
+    print("requests required. Install: pip install requests")
     raise
 
 # -----------------------------
-# CONFIG (keep empty for security; fill via env or paste into BOT_TOKEN_DIRECT)
+# CONFIG (edit as needed)
 # -----------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")        # preferred: set as environment variable
-BOT_TOKEN_DIRECT = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"                         # fallback: paste token here only if you must
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")  # prefer env var
+BOT_TOKEN_DIRECT = ""  # e.g. "123456:ABC-DEF..." if you must paste (keep empty for safety)
 if not BOT_TOKEN:
     BOT_TOKEN = BOT_TOKEN_DIRECT
-if not BOT_TOKEN:
-    print("ERROR: BOT_TOKEN is not set. Please set environment variable BOT_TOKEN or BOT_TOKEN_DIRECT in the file.")
-    # Do not exit here if you want to continue editing; but typical behavior is to require token.
-    # We'll not exit here to let you read the file; the bot will exit at runtime if token remains empty.
-PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")   # for Telegram Payments (Stars/XTR or other provider)
-HF_TOKEN = os.getenv("HF_TOKEN", "")                # optional HuggingFace inference token for content moderation
+
+PROVIDER_TOKEN = os.getenv("PROVIDER_TOKEN", "")  # payment provider token (Stars/XTR)
+HF_TOKEN = os.getenv("HF_TOKEN", "")  # HuggingFace token for optional moderation
 OWNER_ID = str(os.getenv("OWNER_ID", "") or "8013245091")
 CHANNEL = os.getenv("CHANNEL", "") or "@ChatNaAnnouncements"
 SUPPORT = os.getenv("SUPPORT", "") or "@its_alimo"
 
-# -----------------------------
-# VIP plans config (user-visible prices are "stars")
-# -----------------------------
+# VIP plans config (stars)
 VIP_PLANS = {
     "vip_1w":  {"days": 7,   "stars": 25,  "title": "VIP 1 هفته"},
     "vip_1m":  {"days": 30,  "stars": 100, "title": "VIP 1 ماهه"},
     "vip_3m":  {"days": 90,  "stars": 280, "title": "VIP 3 ماهه"},
     "vip_6m":  {"days": 180, "stars": 560, "title": "VIP 6 ماهه"},
     "vip_12m": {"days": 365, "stars": 860, "title": "VIP 1 ساله"},
+    # xmas is free special 3-month plan (stars=0)
     "vip_xmas":{"days": 90,  "stars": 0,   "title": "VIP کریسمس — 3 ماه (رایگان)"}
 }
-# XMAS plan available only within this number of seconds from bot start (4 days by default)
+# Xmas availability window after bot first run (seconds)
 XMAS_WINDOW_SECONDS = 4 * 24 * 3600
 
-CURRENCY = "XTR"  # Stars currency code; set to XTR for Telegram Stars
+CURRENCY = "XTR"  # currency used for invoice (Stars token)
 
 # -----------------------------
-# persistent files + directories
+# Storage files
 # -----------------------------
 DATA_DIR = "shadow_titan_data"
-if not os.path.exists(DATA_DIR):
-    os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 FILES = {
     "users": os.path.join(DATA_DIR, "db_users.json"),
@@ -82,7 +94,7 @@ FILES = {
 }
 
 # -----------------------------
-# logging config
+# Logging
 # -----------------------------
 LOG_FILE = os.path.join(DATA_DIR, "shadow_titan.log")
 logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
@@ -90,9 +102,10 @@ logging.basicConfig(filename=LOG_FILE, level=logging.INFO,
 logger = logging.getLogger("ShadowTitan")
 
 # -----------------------------
-# timezone helpers for Iran (UTC+3:30)
+# Time helpers (Iran UTC+3:30)
 # -----------------------------
 IRAN_OFFSET = datetime.timedelta(hours=3, minutes=30)
+
 def now_ts() -> int:
     return int(time.time())
 
@@ -106,15 +119,15 @@ def ts_to_iran_str(ts: int) -> str:
         return str(ts)
 
 # -----------------------------
-# tiny JSON DB with lock
+# Simple thread-safe JSON DB
 # -----------------------------
 class SimpleDB:
     def __init__(self, files: Dict[str,str]):
         self.files = files
         self.lock = threading.Lock()
-        self._init_files()
+        self._ensure_files()
 
-    def _init_files(self):
+    def _ensure_files(self):
         defaults = {
             "users": {},
             "bans": {"permanent": {}, "temporary": {}},
@@ -125,15 +138,15 @@ class SimpleDB:
             "backups": {}
         }
         with self.lock:
-            for key, path in self.files.items():
-                if not os.path.exists(path):
+            for k, p in self.files.items():
+                if not os.path.exists(p):
                     try:
-                        with open(path, "w", encoding="utf-8") as f:
-                            json.dump(defaults.get(key, {}), f, ensure_ascii=False, indent=2)
+                        with open(p, "w", encoding="utf-8") as f:
+                            json.dump(defaults.get(k, {}), f, ensure_ascii=False, indent=2)
                     except Exception as e:
-                        logger.error("Failed to create db file %s: %s", path, e)
+                        logger.error("Failed to create %s: %s", p, e)
 
-    def read(self, key: str) -> Any:
+    def read(self, key: str):
         path = self.files.get(key)
         if not path:
             return {}
@@ -142,10 +155,10 @@ class SimpleDB:
                 with open(path, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                logger.error("DB read error %s: %s", key, e)
+                logger.error("DB read %s error: %s", key, e)
                 return {}
 
-    def write(self, key: str, data: Any):
+    def write(self, key: str, data):
         path = self.files.get(key)
         if not path:
             return
@@ -154,46 +167,30 @@ class SimpleDB:
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                logger.error("DB write error %s: %s", key, e)
+                logger.error("DB write %s error: %s", key, e)
 
 db = SimpleDB(FILES)
 
 # -----------------------------
-# profanity detection (robust normalization)
+# Profanity detection + normalization
 # -----------------------------
-# Extended list of Persian obscene roots / words. This list is large but not exhaustive — add words as needed.
 BAD_WORDS = [
-    "کیر","کیرد","کیرت","کیرم","کیری","کیریش","کیرها","کیرمات",
-    "کس","کسکش","کسکشا","کسکول","کص","کصک","کوس","کوسم","کوسش",
-    "کون","کونی","کونم","کونش","گای","گایید","گاییدن","گاییدم","گاییدمت",
-    "گوه","گوهر","گوهخور","گوخور","گوز","گوزی","گوزید","گوزیدن",
-    "جنده","جنده‌باز","جنده‌خانه","جنده‌ها","جند","قحبه","قهبه",
-    "فاحشه","فاحشه‌باز","پدرسگ","پدرسوخته","پدرسک","پدرسگه",
-    "ناموس","ناموسی","ناموست","سکس","سکسی","پورن","پورنو","پورن",
-    "لاش","لاشی","لاشخور","لاشه","احمق","خنگ","خر","خرم","خرتو",
-    "دیوث","دیوث‌صفت","جق","جق‌زدن","مالیدن","مالید","بکن","بکنم",
-    "بکنت","بکنیم","بمال","بمالم","پفیوز","پیفیوز","مرتیکه","مرتیکهه",
-    "شاسگول","شاسگولم","کسخل","کسده","کسشر","کسفروش","مادرجنده",
-    "مادرجرنده","کیرمون","کصمون","کونمون","کسون","کسکشون"
+    "کیر","کیرد","کیرت","کیرم","کیری","کیریش","کیرها",
+    "کس","کسکش","کسکول","کص","کوس","کوسم","کوسش",
+    "کون","کونی","کونم","گای","گایید","گاییدن","گاییدم",
+    "گوه","گوهخور","گوخور","گوز","گوزی","جنده","قحبه",
+    "فاحشه","پدرسگ","پدرسوخته","ناموس","سکس","پورن",
+    "لاش","لاشی","احمق","خر","دیوث","جق","مالیدن","بکن",
+    "مرتیکه","شاسگول","کسخل","کسده","کسشر","مادرجنده"
 ]
 
-# Regex cleanup: diacritics, zero-width, punctuation, digits
 DIACRITICS_RE = re.compile(r'[\u064B-\u065F\u0610-\u061A\u06D6-\u06ED\u0640]')
 ZERO_WIDTH_RE = re.compile(r'[\u200b\u200c]')
 PUNCT_RE = re.compile(r'[\s\.\-\_\*\|\\\/\:\;\'\"\,\(\)\[\]\{\}\?\!\،\؛•·–]')
 DIGIT_RE = re.compile(r'[0-9۰-۹]')
-# Normalize repeated letters
 REPEAT_RE = re.compile(r'(.)\1{2,}')
 
 def normalize_persian(text: str) -> str:
-    """
-    Normalize Persian text to improve profanity detection:
-    - lowercase
-    - replace Arabic variants with standard Persian forms
-    - remove diacritics, zero width chars
-    - remove punctuation and digits
-    - collapse long letter repeats
-    """
     if not text:
         return ""
     s = text.lower()
@@ -203,16 +200,12 @@ def normalize_persian(text: str) -> str:
     s = s.replace('ـ', '')
     s = PUNCT_RE.sub('', s)
     s = DIGIT_RE.sub('', s)
-    s = REPEAT_RE.sub(r'\1\1', s)  # collapse triple repeats to double (e.g., 'ههههه' -> 'هه')
+    s = REPEAT_RE.sub(r'\1\1', s)
     return s
 
 BAD_NORM = [normalize_persian(w) for w in BAD_WORDS]
 
 def contains_bad(text: str) -> bool:
-    """
-    Detects profanity robustly by normalizing text and checking substrings.
-    Resists attempts to bypass by adding dots, spaces, zero-width chars, or repeated letters.
-    """
     if not text:
         return False
     n = normalize_persian(text)
@@ -222,18 +215,15 @@ def contains_bad(text: str) -> bool:
     return False
 
 # -----------------------------
-# Utility helpers
+# Utilities
 # -----------------------------
-def rand_token(n: int = 8) -> str:
+def rand_token(n=8):
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=n))
 
 def make_payload(uid: str, plan_key: str) -> str:
     return f"{plan_key}_{uid}_{now_ts()}_{rand_token(6)}"
 
 def safe_send(bot: telebot.TeleBot, chat_id: int, text: str, **kwargs):
-    """
-    Wrapper around bot.send_message to catch exceptions.
-    """
     try:
         return bot.send_message(chat_id, text, **kwargs)
     except Exception as e:
@@ -241,13 +231,9 @@ def safe_send(bot: telebot.TeleBot, chat_id: int, text: str, **kwargs):
         return None
 
 # -----------------------------
-# Optional HF moderation (text + image placeholders)
+# Optional HF moderation wrappers
 # -----------------------------
 def hf_text_toxicity_score(text: str) -> float:
-    """
-    Returns toxicity score in [0,1] if HF_TOKEN provided and model accessible.
-    If HF_TOKEN not set or API fails, returns 0.0 (no toxicity detected).
-    """
     if not HF_TOKEN:
         return 0.0
     try:
@@ -256,9 +242,7 @@ def hf_text_toxicity_score(text: str) -> float:
         resp = requests.post(url, headers=headers, json={"inputs": text}, timeout=8)
         if resp.status_code == 200:
             data = resp.json()
-            # Data shape may vary; defensive checks:
-            if isinstance(data, list) and len(data) > 0:
-                # find toxic label score
+            if isinstance(data, list) and data:
                 for item in data[0]:
                     if item.get("label", "").lower() == "toxic":
                         return float(item.get("score", 0.0))
@@ -267,23 +251,15 @@ def hf_text_toxicity_score(text: str) -> float:
     return 0.0
 
 def hf_image_nsfw_score(image_bytes: bytes) -> float:
-    """
-    Placeholder for an image NSFW detection using Hugging Face (or other) if desired.
-    Returns 0.0 if not available.
-    NOTE: Implementing real image moderation requires a model and careful handling.
-    """
     if not HF_TOKEN:
         return 0.0
     try:
-        # example model endpoint; adapt as needed
         url = "https://api-inference.huggingface.co/models/michellejieli/nsfw_detector"
         headers = {"Authorization": f"Bearer {HF_TOKEN}"}
         files = {"file": image_bytes}
         resp = requests.post(url, headers=headers, files=files, timeout=12)
         if resp.status_code == 200:
             data = resp.json()
-            # parse contract-specific response
-            # This is a placeholder; user must adapt according to actual model output
             if isinstance(data, dict) and "nsfw_score" in data:
                 return float(data.get("nsfw_score", 0.0))
     except Exception as e:
@@ -291,7 +267,7 @@ def hf_image_nsfw_score(image_bytes: bytes) -> float:
     return 0.0
 
 # -----------------------------
-# Keyboards (reply & inline)
+# Keyboards
 # -----------------------------
 def kb_main(uid: str) -> types.ReplyKeyboardMarkup:
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
@@ -311,14 +287,13 @@ def kb_chatting() -> types.ReplyKeyboardMarkup:
 
 def vip_inline_menu(uid: str) -> types.InlineKeyboardMarkup:
     kb = types.InlineKeyboardMarkup(row_width=1)
-    users = db.read("users")
-    user = users.get(str(uid), {})
-    # show xmas if within window and user not used yet
     cfg = db.read("config")
     start = cfg.get("start_ts", now_ts())
+    users = db.read("users")
+    user = users.get(str(uid), {})
+    # show Xmas if within window and not used
     if now_ts() <= start + XMAS_WINDOW_SECONDS and not user.get("used_xmas", False):
         kb.add(types.InlineKeyboardButton(VIP_PLANS["vip_xmas"]["title"], callback_data="buy_xmas"))
-    # add normal plans
     for key, plan in VIP_PLANS.items():
         if key == "vip_xmas":
             continue
@@ -358,31 +333,29 @@ def duration_choice_kb(prefix: str) -> types.InlineKeyboardMarkup:
     return kb
 
 # -----------------------------
-# Bot core class
+# Bot core
 # -----------------------------
 class ShadowTitanBot:
     def __init__(self, token: str):
         self.token = token or BOT_TOKEN
         if not self.token:
-            logger.error("No BOT token set. Set BOT_TOKEN environment or BOT_TOKEN_DIRECT in file.")
-            print("No BOT token set. Please set BOT_TOKEN env var or BOT_TOKEN_DIRECT in file.")
+            logger.error("BOT token is not set.")
+            print("ERROR: BOT token is not set. Set BOT_TOKEN env or BOT_TOKEN_DIRECT in file.")
             sys.exit(1)
         self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
         self.owner = str(OWNER_ID)
-        self.provider_token = PROVIDER_TOKEN  # may be empty
-        # load config and determine xmas window start
+        self.provider_token = PROVIDER_TOKEN
+        # init housekeeping timestamps
         cfg = db.read("config")
         self.start_ts = cfg.get("start_ts", now_ts())
         self.xmas_expire_ts = self.start_ts + XMAS_WINDOW_SECONDS
-        # initialize handlers
+        # register handlers
         self.register_handlers()
-        # background tasks
+        # start background workers
         self._start_background_workers()
         logger.info("ShadowTitanBot initialized")
 
-    # -----------------------------
-    # user helpers
-    # -----------------------------
+    # ---- user helpers ----
     def ensure_user(self, uid: str) -> Dict[str, Any]:
         uid = str(uid)
         users = db.read("users")
@@ -423,9 +396,7 @@ class ShadowTitanBot:
         except Exception:
             return False
 
-    # -----------------------------
-    # payments helpers
-    # -----------------------------
+    # ---- payments ----
     def register_payment(self, payload: str, uid: str, plan_key: str, amount: int):
         payments = db.read("payments")
         payments[payload] = {"uid": str(uid), "plan": plan_key, "amount": int(amount), "time": now_ts(), "done": False}
@@ -441,18 +412,14 @@ class ShadowTitanBot:
             return payments[payload]
         return None
 
-    # -----------------------------
-    # background workers
-    # -----------------------------
+    # ---- background ----
     def _start_background_workers(self):
-        # worker thread that periodically performs housekeeping (backups, cleaning queue)
         def worker():
             while True:
                 try:
-                    # every hour create a small backup snapshot
+                    # hourly backup at minute 0
                     if datetime.datetime.utcnow().minute == 0:
                         self._create_backup()
-                    # cleanup: remove users with partner that no longer exist? (basic)
                     time.sleep(60)
                 except Exception as e:
                     logger.error("Background worker error: %s", e)
@@ -463,29 +430,27 @@ class ShadowTitanBot:
     def _create_backup(self):
         try:
             timestamp = iran_now_dt().strftime("%Y%m%d%H%M%S")
-            snapshot = {}
-            for key in FILES.keys():
-                snapshot[key] = db.read(key)
+            snap = {}
+            for k in FILES.keys():
+                snap[k] = db.read(k)
             backups = db.read("backups")
-            backups[timestamp] = snapshot
+            backups[timestamp] = snap
             db.write("backups", backups)
-            logger.info("Backup created %s", timestamp)
-            # optionally trim old backups (keep 30)
+            logger.info("Backup %s created", timestamp)
+            # keep last 60
             if len(backups) > 60:
                 keys = sorted(backups.keys())
                 for k in keys[:-60]:
                     del backups[k]
                 db.write("backups", backups)
         except Exception as e:
-            logger.error("Backup creation failed: %s", e)
+            logger.error("Backup failed: %s", e)
 
-    # -----------------------------
-    # handler registration
-    # -----------------------------
+    # ---- register handlers ----
     def register_handlers(self):
         bot = self.bot
 
-        # start command: registration/enforced flow + payload link handling
+        # /start handler
         @bot.message_handler(commands=['start'])
         def handle_start(msg):
             uid = str(msg.chat.id)
@@ -503,7 +468,7 @@ class ShadowTitanBot:
                 self.save_user(uid, user)
                 safe_send(bot, int(uid), "برای ارسال پیام ناشناس، متن را بفرستید ✉️")
                 return
-            # if user hasn't completed registration, force it
+            # if incomplete registration, ask name
             if user.get("state") in ("name", "sex", "age"):
                 user["state"] = "name"
                 user["name"] = ""
@@ -514,15 +479,15 @@ class ShadowTitanBot:
                 return
             safe_send(bot, int(uid), "خوش برگشتی عزیز 🌹", reply_markup=kb_main(uid))
 
-        # Pre-checkout required handler for invoices
+        # pre-checkout (answer)
         @bot.pre_checkout_query_handler(func=lambda q: True)
         def pre_checkout(q):
             try:
                 bot.answer_pre_checkout_query(q.id, ok=True)
             except Exception as e:
-                logger.error("pre_checkout answer failed: %s", e)
+                logger.error("pre_checkout error: %s", e)
 
-        # Successful payment handler: invoice_payload mapping to plan
+        # successful payment handler
         @bot.message_handler(content_types=['successful_payment'])
         def successful_payment_handler(msg):
             try:
@@ -558,7 +523,7 @@ class ShadowTitanBot:
                 logger.error("successful_payment_handler error: %s", e)
                 logger.debug(traceback.format_exc())
 
-        # main message handler: registration, menu, chat, special commands
+        # main messages
         @bot.message_handler(content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
         def main_handler(msg):
             uid = str(msg.chat.id)
@@ -568,21 +533,21 @@ class ShadowTitanBot:
             bans = db.read("bans")
             cfg = db.read("config")
 
-            # BAN checks
+            # ban checks
             if uid in bans.get("permanent", {}):
                 return
             if uid in bans.get("temporary", {}) and now_ts() < bans["temporary"][uid]["end"]:
                 return
 
-            # maintenance mode
+            # maintenance
             if cfg.get("settings", {}).get("maintenance", False) and not (self.is_vip(user) or uid == self.owner):
-                safe_send(bot, int(uid), "🔧 ربات در حالت تعمیر و نگهداری است. فقط کاربران VIP دسترسی دارند.")
+                safe_send(bot, int(uid), "🔧 ربات در حال تعمیر است. فقط VIP دسترسی دارد.")
                 return
 
-            # registration steps
+            # registration flow
             if user.get("state") == "name":
                 if not text or contains_bad(text):
-                    safe_send(bot, int(uid), "نام نامعتبر — لطفاً یک نام مستعار مناسب و بدون کلمات نامناسب وارد کنید:")
+                    safe_send(bot, int(uid), "نام نامعتبر — لطفاً نام مستعار مناسب وارد کن:")
                     return
                 user["name"] = text.strip()[:30]
                 user["state"] = "sex"
@@ -595,30 +560,28 @@ class ShadowTitanBot:
 
             if user.get("state") == "age":
                 if not text or not text.isdigit() or not 12 <= int(text) <= 99:
-                    safe_send(bot, int(uid), "❌ سن باید عددی بین ۱۲ تا ۹۹ باشد — لطفاً عدد معتبر وارد کنید:")
+                    safe_send(bot, int(uid), "سن نامعتبر — عدد بین ۱۲ تا ۹۹ وارد کنید:")
                     return
                 user["age"] = int(text)
                 user["state"] = "idle"
                 self.save_user(uid, user)
-                safe_send(bot, int(uid), "ثبت‌نام با موفقیت انجام شد 🎉\nحالا از ربات لذت ببر!", reply_markup=kb_main(uid))
+                safe_send(bot, int(uid), "ثبت‌نام موفق 🎉", reply_markup=kb_main(uid))
                 return
 
-            # anonymous link message flow
+            # anon link send state
             if user.get("state") == "anon_send":
-                # only text allowed for anonymous link sends
                 if msg.content_type != "text":
                     safe_send(bot, int(uid), "❌ فقط متن برای پیام ناشناس مجاز است")
                     return
                 target = user.get("anon_target")
                 if not target:
-                    safe_send(bot, int(uid), "مقصد ناشناس نامشخص شد — لطفاً دوباره تلاش کنید")
-                    user["state"] = "idle"; self.save_user(uid, user); return
+                    safe_send(bot, int(uid), "مقصد نامشخص شد — دوباره تلاش کنید")
+                    user["state"] = "idle"; self.save_user(uid, user)
+                    return
                 mdb = db.read("messages")
                 inbox = mdb.get("inbox", {})
                 inbox.setdefault(str(target), []).append({
-                    "text": text,
-                    "from": uid,
-                    "seen": False,
+                    "text": text, "from": uid, "seen": False,
                     "time": iran_now_dt().strftime("%H:%M %d/%m")
                 })
                 mdb["inbox"] = inbox
@@ -627,28 +590,27 @@ class ShadowTitanBot:
                 try:
                     safe_send(bot, int(target), "📩 یک پیام ناشناس جدید دریافت کردید!")
                 except Exception:
-                    logger.debug("notify target failed")
+                    logger.debug("notify failed")
                 user["state"] = "idle"; self.save_user(uid, user)
                 return
 
-            # If user is in a chat (partner)
+            # if inside chat with partner
             if user.get("partner"):
                 partner = user["partner"]
-                # end chat
                 if text == "🔚 پایان گفتگو":
                     kb = types.InlineKeyboardMarkup()
                     kb.add(types.InlineKeyboardButton("بله، پایان بده", callback_data="end_yes"),
                            types.InlineKeyboardButton("خیر، ادامه بده", callback_data="end_no"))
-                    safe_send(bot, int(uid), "آیا مطمئن هستید که می‌خواهید چت را پایان دهید؟", reply_markup=kb)
+                    safe_send(bot, int(uid), "آیا مطمئنی؟", reply_markup=kb)
                     return
-                # report
+
                 if text == "🚩 گزارش تخلف":
                     user["report_target"] = partner
                     user["report_last_msg_id"] = msg.message_id
                     self.save_user(uid, user)
-                    safe_send(bot, int(uid), "دلیل گزارش را انتخاب کنید:", reply_markup=kb_report_inline())
+                    safe_send(bot, int(uid), "دلیل گزارش:", reply_markup=kb_report_inline())
                     return
-                # block & exit
+
                 if text == "🚫 بلاک و خروج":
                     blocks = user.get("blocks", [])
                     if partner not in blocks:
@@ -657,15 +619,16 @@ class ShadowTitanBot:
                     self.save_user(uid, user)
                     self.end_chat(uid, partner, "بلاک کرد")
                     return
-                # request ID
+
                 if text == "👥 درخواست آیدی":
                     kb = types.InlineKeyboardMarkup()
                     kb.add(types.InlineKeyboardButton("بله ✅", callback_data=f"id_share_yes_{uid}"),
                            types.InlineKeyboardButton("خیر ❌", callback_data="id_share_no"))
                     safe_send(bot, int(partner), "هم‌صحبت درخواست آیدی شما را دارد. موافقید؟", reply_markup=kb)
-                    safe_send(bot, int(uid), "درخواست ارسال شد، منتظر تایید باشید")
+                    safe_send(bot, int(uid), "درخواست ارسال شد")
                     return
-                # profanity filtering in-chat
+
+                # profanity check
                 if text and contains_bad(text):
                     try:
                         bot.delete_message(int(uid), msg.message_id)
@@ -679,13 +642,13 @@ class ShadowTitanBot:
                         return
                     safe_send(bot, int(uid), f"⚠️ اخطار {user['warns']}/3 – فحاشی ممنوع است!")
                     return
-                # optional AI scanning
+
+                # HF scan optional
                 toxic_score = hf_text_toxicity_score(text)
                 if toxic_score > 0.85:
-                    # treat as high toxicity
                     try:
                         bot.delete_message(int(uid), msg.message_id)
-                    except:
+                    except Exception:
                         pass
                     user["warns"] = user.get("warns", 0) + 1
                     self.save_user(uid, user)
@@ -695,20 +658,21 @@ class ShadowTitanBot:
                         return
                     safe_send(bot, int(uid), f"⚠️ اخطار {user['warns']}/3 – محتوای نامناسب شناسایی شد")
                     return
-                # forward/copy message to partner (preserve media)
+
+                # copy to partner
                 try:
                     bot.copy_message(int(partner), int(uid), msg.message_id)
                 except Exception as e:
                     logger.debug("copy_message failed: %s", e)
                 return
 
-            # Not in chat: menu actions
+            # Not in chat: main menu actions
             if text == "🛰 شروع چت ناشناس":
                 kb = types.InlineKeyboardMarkup(row_width=3)
                 kb.add(types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
                        types.InlineKeyboardButton("خانم 👧", callback_data="find_f"),
                        types.InlineKeyboardButton("هرکی 🌈", callback_data="find_any"))
-                safe_send(bot, int(uid), "دنبال چه کسی می‌گردی؟ ✨", reply_markup=kb)
+                safe_send(bot, int(uid), "دنبال چه کسی می‌گردی؟", reply_markup=kb)
                 return
 
             if text == "👤 پروفایل من":
@@ -733,14 +697,14 @@ class ShadowTitanBot:
                 except Exception:
                     botname = "ShadowTitanBot"
                 link = f"https://t.me/{botname}?start=msg_{uid}"
-                safe_send(bot, int(uid), f"<b>لینک ناشناس شما</b>\n\n{link}\n\nبا اشتراک این لینک، دیگران می‌توانند ناشناس به شما پیام بفرستند ✨")
+                safe_send(bot, int(uid), f"<b>لینک ناشناس شما</b>\n\n{link}")
                 return
 
             if text == "📥 پیام‌های ناشناس":
                 mdb = db.read("messages")
                 inbox = mdb.get("inbox", {}).get(uid, [])
                 if not inbox:
-                    safe_send(bot, int(uid), "هیچ پیام ناشناسی دریافت نکرده‌اید 📭")
+                    safe_send(bot, int(uid), "هیچ پیام ناشناسی ندارید")
                     return
                 kb = types.InlineKeyboardMarkup()
                 txt = "<b>پیام‌های ناشناس شما</b>\n\n"
@@ -748,7 +712,6 @@ class ShadowTitanBot:
                     txt += f"{i+1}. {m['text']}\n<i>{m['time']}</i>\n\n"
                     kb.add(types.InlineKeyboardButton(f"پاسخ به پیام {i+1}", callback_data=f"anon_reply_{i}"))
                 safe_send(bot, int(uid), txt, reply_markup=kb)
-                # mark seen and notify senders
                 updated = False
                 for m in inbox:
                     if not m.get("seen"):
@@ -756,7 +719,7 @@ class ShadowTitanBot:
                         updated = True
                         try:
                             safe_send(bot, int(m["from"]), "✅ پیام شما دیده شد")
-                        except:
+                        except Exception:
                             pass
                 if updated:
                     mdb["inbox"][uid] = inbox
@@ -766,19 +729,19 @@ class ShadowTitanBot:
             if text == "🎡 گردونه شانس روزانه":
                 today = iran_now_dt().strftime("%Y-%m-%d")
                 if user.get("last_spin") == today:
-                    safe_send(bot, int(uid), "امروز قبلاً گردونه را چرخانده‌اید 😊")
+                    safe_send(bot, int(uid), "امروز قبلاً گردونه را زدی")
                     return
                 user["last_spin"] = today
-                # 5% chance to win 30-day VIP
+                # 5% chance => 30 day VIP
                 if random.random() < 0.05:
                     now = now_ts()
                     start_until = max(now, int(user.get("vip_until", 0)))
                     user["vip_until"] = start_until + 30 * 86400
                     self.save_user(uid, user)
-                    safe_send(bot, int(uid), f"🎉🎉 <b>تبریک! شما رنک VIP (۳۰ روزه) دریافت کردید!</b>\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
+                    safe_send(bot, int(uid), f"🎉 برنده شدی! VIP 30 روزه — اعتبار تا {ts_to_iran_str(user['vip_until'])}")
                 else:
                     self.save_user(uid, user)
-                    safe_send(bot, int(uid), "گردونه چرخید... پوچ! شانس بعدی را امتحان کنید 🌟")
+                    safe_send(bot, int(uid), "متاسفانه اینبار نه — دوباره شانس رو امتحان کن")
                 return
 
             if text == "🎖 خرید VIP (پلن‌ها)":
@@ -786,9 +749,9 @@ class ShadowTitanBot:
                             "✨ امکانات VIP:\n"
                             "• ارسال آزاد گیف و استیکر\n"
                             "• دسترسی به ربات در زمان تعمیر\n"
-                            "• پیدا کردن سریع‌تر هم‌صحبت\n\n"
+                            "• اتصال سریع‌تر به هم‌صحبت\n\n"
                             "⏳ VIP زمان‌دار است\n"
-                            "💳 پرداخت با Telegram Stars (یا پرداخت دستی fallback)")
+                            "💳 پرداخت با Telegram Stars (یا پرداخت دستی)")
                 safe_send(bot, int(uid), features, reply_markup=vip_inline_menu(uid))
                 return
 
@@ -796,7 +759,7 @@ class ShadowTitanBot:
                 kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
                 kb.add("✏️ تغییر نام", "🔢 تغییر سن", "⚧ تغییر جنسیت")
                 kb.add("🔙 بازگشت به منو")
-                safe_send(bot, int(uid), "تنظیمات پروفایل:", reply_markup=kb)
+                safe_send(bot, int(uid), "تنظیمات:", reply_markup=kb)
                 return
 
             if text == "✏️ تغییر نام":
@@ -812,7 +775,7 @@ class ShadowTitanBot:
                 user["name"] = text[:30]
                 user["state"] = "idle"
                 self.save_user(uid, user)
-                safe_send(bot, int(uid), "نام با موفقیت تغییر کرد ✅", reply_markup=kb_main(uid))
+                safe_send(bot, int(uid), "نام تغییر کرد ✅", reply_markup=kb_main(uid))
                 return
 
             if text == "🔢 تغییر سن":
@@ -823,7 +786,7 @@ class ShadowTitanBot:
 
             if user.get("state") == "change_age":
                 if not text.isdigit() or not 12 <= int(text) <= 99:
-                    safe_send(bot, int(uid), "سن باید عددی بین ۱۲ تا ۹۹ باشد")
+                    safe_send(bot, int(uid), "سن نامعتبر")
                     return
                 user["age"] = int(text)
                 user["state"] = "idle"
@@ -840,182 +803,191 @@ class ShadowTitanBot:
 
             # admin menu
             if uid == self.owner and text == "📊 پنل مدیریت":
-                safe_send(bot, int(uid), "پنل مدیریت پیشرفته", reply_markup=kb_admin())
+                safe_send(bot, int(uid), "پنل مدیریت", reply_markup=kb_admin())
                 return
 
-            # fallback: guide to use menu
+            # fallback
             safe_send(bot, int(uid), "لطفاً از دکمه‌های منو استفاده کنید", reply_markup=kb_main(uid))
 
-        # callback_query handler: handles all inline button interactions
+        # callback query handler
         @bot.callback_query_handler(func=lambda c: True)
         def callback_handler(call):
+            uid = str(call.from_user.id)
+            data = call.data or ""
+            users = db.read("users")
+            user = users.get(uid) or self.ensure_user(uid)
+            # quick answer to remove loading...
             try:
-                uid = str(call.from_user.id)
-                data = call.data or ""
-                users = db.read("users")
-                user = users.get(uid) or self.ensure_user(uid)
-                # answer quick to avoid "loading" UI long
-                try:
-                    bot.answer_callback_query(call.id, text="درحال اجرا...")
-                except:
-                    pass
+                bot.answer_callback_query(call.id, text="درحال اجرا...")
+            except Exception:
+                pass
 
-                # registration sex choices
-                if data in ("reg_sex_m", "reg_sex_f"):
-                    user["sex"] = "آقا" if data == "reg_sex_m" else "خانم"
-                    user["state"] = "age"
-                    users[uid] = user; db.write("users", users)
-                    safe_send(bot, int(uid), "سن خود را وارد کنید (۱۲–۹۹):")
-                    return
+            # registration sexes
+            if data in ("reg_sex_m", "reg_sex_f"):
+                user["sex"] = "آقا" if data == "reg_sex_m" else "خانم"
+                user["state"] = "age"
+                users[uid] = user; db.write("users", users)
+                safe_send(bot, int(uid), "سن خود را وارد کنید (۱۲–۹۹):")
+                return
 
-                if data in ("change_sex_m", "change_sex_f"):
-                    user["sex"] = "آقا" if data == "change_sex_m" else "خانم"
-                    user["state"] = "idle"
-                    users[uid] = user; db.write("users", users)
-                    safe_send(bot, int(uid), "جنسیت با موفقیت تغییر کرد ✅", reply_markup=kb_main(uid))
-                    return
+            if data in ("change_sex_m", "change_sex_f"):
+                user["sex"] = "آقا" if data == "change_sex_m" else "خانم"
+                user["state"] = "idle"
+                users[uid] = user; db.write("users", users)
+                safe_send(bot, int(uid), "جنسیت تغییر کرد ✅", reply_markup=kb_main(uid))
+                return
 
-                # find partner callbacks
-                if data.startswith("find_"):
-                    dbq = db.read("queue")
-                    if uid not in dbq.get("general", []):
-                        dbq["general"].append(uid)
+            # find partner callbacks
+            if data.startswith("find_"):
+                dbq = db.read("queue")
+                if uid not in dbq.get("general", []):
+                    dbq["general"].append(uid)
+                db.write("queue", dbq)
+                safe_send(bot, int(uid), "در حال جستجو برای هم‌صحبت... 🔍")
+                pots = [p for p in dbq.get("general", []) if p != uid]
+                pots = [p for p in pots if uid not in db.read("users").get(p, {}).get("blocks", [])]
+                if pots:
+                    partner = random.choice(pots)
+                    try:
+                        dbq["general"].remove(uid)
+                    except Exception:
+                        pass
+                    try:
+                        dbq["general"].remove(partner)
+                    except Exception:
+                        pass
+                    users[uid]["partner"] = partner
+                    users[partner]["partner"] = uid
                     db.write("queue", dbq)
-                    safe_send(bot, int(uid), "در حال جستجو برای هم‌صحبت... 🔍")
-                    pots = [p for p in dbq.get("general", []) if p != uid]
-                    pots = [p for p in pots if uid not in db.read("users").get(p, {}).get("blocks", [])]
-                    if pots:
-                        partner = random.choice(pots)
-                        # remove both from queue
-                        try:
-                            dbq["general"].remove(uid)
-                        except:
-                            pass
-                        try:
-                            dbq["general"].remove(partner)
-                        except:
-                            pass
-                        users[uid]["partner"] = partner
-                        users[partner]["partner"] = uid
-                        db.write("queue", dbq)
-                        db.write("users", users)
-                        safe_send(bot, int(uid), "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=kb_chatting())
-                        try:
-                            safe_send(bot, int(partner), "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=kb_chatting())
-                        except:
-                            pass
-                    else:
-                        safe_send(bot, int(uid), "شما به صف اضافه شدید — لطفاً صبور باشید.")
-                    return
+                    db.write("users", users)
+                    safe_send(bot, int(uid), "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=kb_chatting())
+                    try:
+                        safe_send(bot, int(partner), "هم‌صحبت پیدا شد! چت را شروع کنید 💬", reply_markup=kb_chatting())
+                    except Exception:
+                        pass
+                else:
+                    safe_send(bot, int(uid), "اضافه شدی به صف — لطفاً شکیبا باش")
+                return
 
-                # anon reply selection
-                if data.startswith("anon_reply_"):
+            # anon reply selection
+            if data.startswith("anon_reply_"):
+                try:
                     idx = int(data.split("_")[2])
-                    mdb = db.read("messages")
-                    inbox = mdb.get("inbox", {}).get(uid, [])
-                    if idx < 0 or idx >= len(inbox):
-                        bot.answer_callback_query(call.id, "پیام نامعتبر")
-                        return
-                    msgdata = inbox[idx]
-                    user["state"] = "anon_reply"
-                    user["anon_target"] = msgdata["from"]
-                    users[uid] = user; db.write("users", users)
-                    safe_send(bot, int(uid), "پاسخ خود را بنویسید:")
+                except Exception:
+                    bot.answer_callback_query(call.id, "پیام نامعتبر")
                     return
+                mdb = db.read("messages")
+                inbox = mdb.get("inbox", {}).get(uid, [])
+                if idx < 0 or idx >= len(inbox):
+                    bot.answer_callback_query(call.id, "پیام نامعتبر")
+                    return
+                msgdata = inbox[idx]
+                user["state"] = "anon_reply"
+                user["anon_target"] = msgdata["from"]
+                users[uid] = user; db.write("users", users)
+                safe_send(bot, int(uid), "پاسخ خود را بنویسید:")
+                return
 
-                # end chat confirmation
-                if data == "end_yes":
-                    partner = user.get("partner")
-                    self.end_chat(uid, partner, "پایان داد")
-                    return
-                if data == "end_no":
-                    bot.answer_callback_query(call.id, "چت ادامه دارد ✅")
-                    return
+            # end chat
+            if data == "end_yes":
+                partner = user.get("partner")
+                self.end_chat(uid, partner, "پایان داد")
+                return
+            if data == "end_no":
+                bot.answer_callback_query(call.id, "چت ادامه دارد ✅")
+                return
 
-                # report handling
-                if data.startswith("rep_"):
-                    if data == "rep_cancel":
-                        bot.answer_callback_query(call.id, "گزارش لغو شد ✅"); return
-                    reasons = {"rep_insult": "فحاشی", "rep_nsfw": "+18", "rep_spam": "اسپم", "rep_harass": "آزار و اذیت"}
-                    reason = reasons.get(data, "نامشخص")
-                    target = user.get("report_target")
-                    last_msg_id = user.get("report_last_msg_id")
-                    report_text = f"🚩 گزارش جدید\nشاکی: {uid}\nمتهم: {target}\nدلیل: {reason}\n\nآخرین پیام (اگر رسانه داشت فوروارد شده):"
-                    safe_send(bot, int(self.owner), report_text)
-                    if last_msg_id:
-                        try:
-                            bot.forward_message(int(self.owner), int(uid), last_msg_id)
-                        except:
-                            safe_send(bot, int(self.owner), "فوروارد رسانه با خطا مواجه شد")
-                    # admin actions
-                    admin_kb1 = types.InlineKeyboardMarkup(row_width=2)
-                    admin_kb1.add(types.InlineKeyboardButton("Ignore", callback_data=f"adm_ignore_{target}"),
-                                  types.InlineKeyboardButton("Permanent Ban", callback_data=f"adm_ban_perm_{target}"))
-                    admin_kb1.add(types.InlineKeyboardButton("Temp Ban", callback_data=f"adm_ban_temp_{target}"),
-                                  types.InlineKeyboardButton("Warning 1", callback_data=f"adm_warn1_{target}"))
-                    safe_send(bot, int(self.owner), "اقدام:", reply_markup=admin_kb1)
-                    bot.answer_callback_query(call.id, "گزارش ارسال شد ✅")
-                    return
+            # report handling
+            if data.startswith("rep_"):
+                if data == "rep_cancel":
+                    bot.answer_callback_query(call.id, "لغو شد ✅"); return
+                reasons = {"rep_insult": "فحاشی", "rep_nsfw": "+18", "rep_spam": "اسپم", "rep_harass": "آزار"}
+                reason = reasons.get(data, "نامشخص")
+                target = user.get("report_target")
+                last_msg_id = user.get("report_last_msg_id")
+                report_text = f"🚩 گزارش\nشاکی: {uid}\nمتهم: {target}\nدلیل: {reason}"
+                safe_send(bot, int(self.owner), report_text)
+                if last_msg_id:
+                    try:
+                        bot.forward_message(int(self.owner), int(uid), last_msg_id)
+                    except Exception:
+                        safe_send(bot, int(self.owner), "فوروارد رسانه با خطا")
+                admin_kb = types.InlineKeyboardMarkup(row_width=2)
+                admin_kb.add(types.InlineKeyboardButton("Ignore", callback_data=f"adm_ignore_{target}"),
+                             types.InlineKeyboardButton("Permanent Ban", callback_data=f"adm_ban_perm_{target}"))
+                admin_kb.add(types.InlineKeyboardButton("Temp Ban", callback_data=f"adm_ban_temp_{target}"),
+                             types.InlineKeyboardButton("Warning 1", callback_data=f"adm_warn1_{target}"))
+                safe_send(bot, int(self.owner), "اقدام:", reply_markup=admin_kb)
+                bot.answer_callback_query(call.id, "گزارش ارسال شد ✅")
+                return
 
-                # admin actions
-                if data.startswith("adm_"):
-                    if str(call.from_user.id) != str(self.owner):
-                        bot.answer_callback_query(call.id, "مجوز نداری")
-                        return
-                    parts = data.split("_", 2)
-                    action = parts[1]
-                    target = parts[2] if len(parts) >= 3 else None
-                    if action == "ignore":
-                        bot.edit_message_text("گزارش ignore شد", int(self.owner), call.message.message_id)
-                        return
-                    if action == "ban" and parts[2] == "perm":
-                        # fallback: not used; pattern depends on earlier construction
-                        self.ban_perm(target, "گزارش تأیید شده")
+            # admin actions
+            if data.startswith("adm_"):
+                if str(call.from_user.id) != str(self.owner):
+                    bot.answer_callback_query(call.id, "مجوز نداری")
+                    return
+                parts = data.split("_", 2)
+                action = parts[1]
+                target = parts[2] if len(parts) >= 3 else None
+                if action == "ignore":
+                    try:
+                        bot.edit_message_text("عملیات لغو شد", int(self.owner), call.message.message_id)
+                    except Exception:
+                        pass
+                    return
+                if action == "ban" and parts[2] == "perm":
+                    self.ban_perm(target, "گزارش تایید شد")
+                    try:
                         bot.edit_message_text("بن دائم اعمال شد", int(self.owner), call.message.message_id)
-                        return
-                    if action == "ban" and parts[2] == "temp":
-                        users = db.read("users")
-                        users[self.owner]["state"] = f"temp_ban_minutes_{target}"
-                        db.write("users", users)
-                        safe_send(bot, int(self.owner), f"دقیقه بن موقت برای {target} را وارد کنید:")
-                        return
-                    if action.startswith("warn"):
-                        warns = 1 if "1" in action else 2
-                        users = db.read("users")
-                        if target in users:
-                            users[target]["warns"] = users[target].get("warns", 0) + warns
-                            db.write("users", users)
-                            try:
-                                safe_send(bot, int(target), f"⚠️ {warns} اخطار دریافت کردید")
-                            except:
-                                pass
+                    except Exception:
+                        pass
+                    return
+                if action == "ban" and parts[2] == "temp":
+                    us = db.read("users")
+                    us[self.owner]["state"] = f"temp_ban_minutes_{target}"
+                    db.write("users", us)
+                    safe_send(bot, int(self.owner), f"دقیقه بن موقت برای {target} را وارد کنید:")
+                    return
+                if action.startswith("warn"):
+                    warns = 1 if "1" in action else 2
+                    us = db.read("users")
+                    if target in us:
+                        us[target]["warns"] = us[target].get("warns", 0) + warns
+                        db.write("users", us)
+                        try:
+                            safe_send(bot, int(target), f"⚠️ {warns} اخطار")
+                        except Exception:
+                            pass
+                    try:
                         bot.edit_message_text(f"{warns} اخطار اعمال شد", int(self.owner), call.message.message_id)
-                        return
-
-                # unban actions from admin list (UI action)
-                if data.startswith("unban_perm_"):
-                    target = data.split("_", 2)[2]
-                    bans = db.read("bans")
-                    if target in bans.get("permanent", {}):
-                        del bans["permanent"][target]
-                        db.write("bans", bans)
-                        try:
-                            bot.edit_message_text("کاربر بخشیده شد ✅", int(self.owner), call.message.message_id)
-                        except:
-                            pass
-                        try:
-                            safe_send(bot, int(target), "حساب شما از بن دائم خارج شد 🌟")
-                        except:
-                            pass
+                    except Exception:
+                        pass
                     return
 
-                # gift and buy callbacks
-                if data.startswith("buy|"):
-                    # start invoice flow
+            # unban
+            if data.startswith("unban_perm_"):
+                target = data.split("_", 2)[2]
+                bans = db.read("bans")
+                if target in bans.get("permanent", {}):
+                    del bans["permanent"][target]
+                    db.write("bans", bans)
+                    try:
+                        bot.edit_message_text("کاربر بخشیده شد ✅", int(self.owner), call.message.message_id)
+                    except Exception:
+                        pass
+                    try:
+                        safe_send(bot, int(target), "شما از بن دائم در آمدید")
+                    except Exception:
+                        pass
+                return
+
+            # buy/gift callbacks
+            if data.startswith("buy|"):
+                try:
                     _, plan_key = data.split("|", 1)
                     plan = VIP_PLANS.get(plan_key)
                     if not plan:
-                        bot.answer_callback_query(call.id, "پلن نامعتبر ❌")
+                        bot.answer_callback_query(call.id, "پلن نامعتبر")
                         return
                     payload = make_payload(uid, plan_key)
                     prices = [types.LabeledPrice(label=plan["title"], amount=int(plan["stars"]))]
@@ -1023,7 +995,7 @@ class ShadowTitanBot:
                         bot.send_invoice(
                             chat_id=int(uid),
                             title=plan["title"],
-                            description=f"⏳ مدت: {plan['days']} روز\n✨ ارسال آزاد گیف و استیکر\n🛠️ دسترسی در تعمیر\n⚡ اتصال سریع‌تر",
+                            description=f"⏳ مدت: {plan['days']} روز\n✨ امکانات VIP",
                             payload=payload,
                             provider_token=self.provider_token if self.provider_token else "",
                             currency=CURRENCY,
@@ -1034,76 +1006,110 @@ class ShadowTitanBot:
                         bot.answer_callback_query(call.id, "فاکتور ارسال شد ✅")
                     except Exception as e:
                         logger.error("send_invoice failed: %s", e)
-                        # fallback manual flow: register and give manual pay option
+                        # fallback manual
                         self.register_payment(payload, uid, plan_key, plan["stars"])
                         kb = types.InlineKeyboardMarkup()
                         kb.add(types.InlineKeyboardButton("✅ اعلام پرداخت (دستی)", callback_data=f"manual|{payload}"))
-                        safe_send(bot, int(uid), "خطا در ساخت فاکتور خودکار. اگر پرداخت را انجام دادی، اعلام پرداخت را بزن و سپس ادمین بررسی می‌کند.", reply_markup=kb)
+                        safe_send(bot, int(uid), "خطا در ساخت فاکتور خودکار. اگر پرداخت دستی انجام شد، اعلام کن.", reply_markup=kb)
                         safe_send(bot, int(uid), f"<code>{payload}</code>")
-                    return
+                except Exception as e:
+                    logger.error("buy| handler error: %s", e)
+                return
 
-                if data == "buy_xmas":
-                    # xmas special: only within window and once per user
-                    cfg = db.read("config")
-                    start_ts = cfg.get("start_ts", now_ts())
-                    if now_ts() > start_ts + XMAS_WINDOW_SECONDS:
-                        bot.answer_callback_query(call.id, "مهلت این پلن به پایان رسیده")
-                        return
-                    if user.get("used_xmas", False):
-                        bot.answer_callback_query(call.id, "شما قبلاً این پلن را گرفته‌اید")
-                        return
-                    start_until = max(now_ts(), int(user.get("vip_until", 0)))
-                    user["vip_until"] = start_until + VIP_PLANS["vip_xmas"]["days"] * 86400
-                    user["used_xmas"] = True
-                    users[uid] = user; db.write("users", users)
-                    safe_send(bot, int(uid), f"🎉 VIP کریسمس (۳ ماهه) فعال شد — دلیل: ویژه کریسمس 🎄\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
+            if data == "buy_xmas":
+                cfg = db.read("config")
+                start_ts = cfg.get("start_ts", now_ts())
+                if now_ts() > start_ts + XMAS_WINDOW_SECONDS:
+                    bot.answer_callback_query(call.id, "مهلت به پایان رسید")
                     return
+                if user.get("used_xmas", False):
+                    bot.answer_callback_query(call.id, "قبلاً گرفتید")
+                    return
+                start_until = max(now_ts(), int(user.get("vip_until", 0)))
+                user["vip_until"] = start_until + VIP_PLANS["vip_xmas"]["days"] * 86400
+                user["used_xmas"] = True
+                users[uid] = user; db.write("users", users)
+                safe_send(bot, int(uid), f"🎉 VIP کریسمس فعال شد — دلیل: ویژه کریسمس 🎄\nاعتبار تا: {ts_to_iran_str(user['vip_until'])}")
+                return
 
-                # اعلام پرداخت دستی (دکمه‌ی "manual|<payload>")
-                if data.startswith("manual|"):
+            # manual payment announce from user
+            if data.startswith("manual|"):
+                try:
+                    payload = data.split("|", 1)[1]
+                    payments = db.read("payments")
+                    pay = payments.get(payload)
+                    if not pay:
+                        bot.answer_callback_query(call.id, "پرداخت نامشخص")
+                        return
+                    safe_send(
+                        bot,
+                        int(self.owner),
+                        f"اعلام پرداخت دستی\nاز: {uid}\nکد: {payload}\nمبلغ: {pay.get('amount')}\nپلن: {pay.get('plan')}\nبرای تایید: /confirm_manual {payload}"
+                    )
+                    bot.answer_callback_query(call.id, "اعلام پرداخت ارسال شد ✅")
+                except Exception as e:
+                    logger.error("manual| callback error: %s", e)
                     try:
-                        payload = data.split("|", 1)[1]
-                        payments = db.read("payments")
-                        pay = payments.get(payload)
+                        bot.answer_callback_query(call.id, "❌ خطا در اعلام پرداخت")
+                    except Exception:
+                        pass
+                return
 
-                        if not pay:
-                            bot.answer_callback_query(call.id, "پرداخت نامشخص")
-                            return
+            # fallback small answer
+            try:
+                bot.answer_callback_query(call.id, "انجام شد")
+            except Exception:
+                pass
 
-                        safe_send(
-                            bot,
-                            int(self.owner),
-                            f"اعلام پرداخت دستی\n"
-                            f"از: {uid}\n"
-                            f"کد پرداخت: {payload}\n"
-                            f"مبلغ: {pay.get('amount')}\n"
-                            f"پلن: {pay.get('plan')}\n\n"
-                            f"برای تایید:\n/confirm_manual {payload}"
-                        )
+        # end of register_handlers
 
-                        try:
-                            bot.answer_callback_query(call.id, "اعلام پرداخت ارسال شد ✅")
-                        except:
-                            # اگر answer_callback_query هم شکست خورد، صرفاً ردش کن
-                            pass
+    # ---- helper methods used above ----
+    def ban_perm(self, uid: str, reason: str = "تخلف"):
+        db_b = db.read("bans")
+        db_b["permanent"][str(uid)] = reason
+        db.write("bans", db_b)
 
-                        return
+    def end_chat(self, a: str, b: str, msg: str = "ترک کرد"):
+        users = db.read("users")
+        if a in users:
+            users[a]["partner"] = None
+        if b in users:
+            users[b]["partner"] = None
+        db.write("users", users)
+        try:
+            safe_send(self.bot, int(a), f"چت به پایان رسید — {msg}", reply_markup=kb_main(a))
+        except Exception:
+            pass
+        try:
+            safe_send(self.bot, int(b), f"هم‌صحبت شما چت را {msg}", reply_markup=kb_main(b))
+        except Exception:
+            pass
 
-                    except Exception as e:
-                        logger.error("manual payment callback error: %s", e)
-                        logger.debug(traceback.format_exc())
-                        try:
-                            bot.answer_callback_query(call.id, "❌ خطا در اعلام پرداخت")
-                        except:
-                            pass
-                        return
-       
+# -----------------------------
+# MAIN
+# -----------------------------
 if __name__ == "__main__":
+    # optional tiny web server to keep alive
+    if FLASK_AVAILABLE:
+        app = Flask(__name__)
+        @app.route("/")
+        def home():
+            return "Shadow Titan - alive"
+        # run flask in background thread
+        def run_flask():
+            try:
+                app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+            except Exception:
+                pass
+        threading.Thread(target=run_flask, daemon=True).start()
+
     try:
-        app = ShadowTitanBot(BOT_TOKEN)
+        bot_app = ShadowTitanBot(BOT_TOKEN)
         print("Bot is running...")
-        app.bot.infinity_polling(skip_pending=True)
+        bot_app.bot.infinity_polling(skip_pending=True)
     except KeyboardInterrupt:
         print("Bot stopped by user")
     except Exception as e:
         print("Fatal error:", e)
+        logger.exception("Fatal error: %s", e)
+        sys.exit(1)
