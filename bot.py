@@ -227,14 +227,28 @@ class ShadowTitanBot:
         return vip_end > datetime.datetime.now().timestamp()
 
     def add_vip(self, uid, duration_key, reason="گیفت"):
-        """افزودن VIP"""
+        """افزودن VIP - مدت VIP ها جمع می‌شود"""
         db_u = self.db.read("users")
         if uid not in db_u["users"]:
             return False
+        
         now = datetime.datetime.now().timestamp()
         current_end = db_u["users"][uid].get("vip_end", 0)
-        new_end = max(current_end, now) + self.vip_durations[duration_key]
+        
+        # مدت جدید را به انتهای مدت فعلی اضافه کن (جمع شدن مدت VIP ها)
+        if current_end < now:
+            # اگر VIP قبلی تمام شده، از الان شروع کن
+            new_end = now + self.vip_durations[duration_key]
+        else:
+            # اگر VIP فعال داره، مدت جدید رو به انتهای اون اضافه کن
+            new_end = current_end + self.vip_durations[duration_key]
+        
         db_u["users"][uid]["vip_end"] = new_end
+        
+        # ذخیره اینکه کاربر VIP رایگان کریسمس را دریافت کرده
+        if duration_key == "3month_free":
+            db_u["users"][uid]["christmas_vip_taken"] = True
+        
         self.db.write("users", db_u)
         
         try:
@@ -246,10 +260,15 @@ class ShadowTitanBot:
                 "6month": "۶ ماه",
                 "year": "۱ سال",
                 "3month_free": "۳ ماه رایگان"
-            }[duration_key]
+            }.get(duration_key, "۳ ماه")
+            
+            # محاسبه مدت باقی‌مانده
+            remaining_days = int((new_end - now) / (24 * 3600))
+            
             self.bot.send_message(uid, f"🎉 <b>تبریک! رنک VIP دریافت کردید</b>\n\n"
                                        f"مدت: {duration_name}\n"
                                        f"تا تاریخ: {end_date}\n"
+                                       f"مدت باقی‌مانده: {remaining_days} روز\n"
                                        f"دلیل: {reason}\n\nمبارک باشد ✨")
         except Exception as e:
             logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
@@ -506,7 +525,7 @@ class ShadowTitanBot:
                         "daily_profile_views": 0,
                         "mission_completed_date": "",
                         "last_spin": "",
-                        "christmas_free_taken": False,
+                        "christmas_vip_taken": False,
                         "had_temp_ban": False,
                         "anon_target": target
                     }
@@ -535,7 +554,7 @@ class ShadowTitanBot:
                     "daily_profile_views": 0,
                     "mission_completed_date": "",
                     "last_spin": "",
-                    "christmas_free_taken": False,
+                    "christmas_vip_taken": False,
                     "had_temp_ban": False
                 }
                 self.db.write("users", db_u)
@@ -838,7 +857,17 @@ class ShadowTitanBot:
                 
                 rank = "🎖 VIP" if self.is_vip(uid) else "⭐ عادی"
                 vip_end = user.get("vip_end", 0)
-                vip_status = f"تا {datetime.datetime.fromtimestamp(vip_end).strftime('%Y-%m-%d')}" if self.is_vip(uid) else "ندارید"
+                
+                if vip_end > 0:
+                    vip_status = f"تا {datetime.datetime.fromtimestamp(vip_end).strftime('%Y-%m-%d')}"
+                    
+                    # محاسبه مدت باقی‌مانده
+                    now = datetime.datetime.now().timestamp()
+                    remaining_days = int((vip_end - now) / (24 * 3600))
+                    if remaining_days > 0:
+                        vip_status += f" ({remaining_days} روز)"
+                else:
+                    vip_status = "ندارید"
                 
                 # اطمینان از وجود coins
                 coins = user.get("coins", 0)
@@ -851,7 +880,11 @@ class ShadowTitanBot:
                 profile_text += f"VIP: {vip_status}\n"
                 profile_text += f"💰 سکه: {coins:,}\n"
                 profile_text += f"👥 رفرال: {user.get('total_referrals', 0)} نفر\n"
-                profile_text += f"⚠️ اخطار: {user.get('warns', 0)}/3"
+                profile_text += f"⚠️ اخطار: {user.get('warns', 0)}/3\n"
+                
+                # نمایش وضعیت VIP کریسمس
+                if user.get("christmas_vip_taken", False):
+                    profile_text += f"🎄 VIP کریسمس: <b>دریافت شده ✅</b>"
                 
                 self.bot.send_message(uid, profile_text)
                 
@@ -1001,34 +1034,37 @@ class ShadowTitanBot:
                 
                 kb = types.InlineKeyboardMarkup(row_width=1)
                 
+                # ابتدا VIP های پولی رو اضافه کن
                 for key, price in self.vip_prices_coins.items():
+                    if key == "3month_free":
+                        continue  # VIP رایگان رو جداگانه اضافه می‌کنیم
+                        
                     name = {
                         "week": "۱ هفته",
                         "month": "۱ ماه",
                         "3month": "۳ ماه",
                         "6month": "۶ ماه",
-                        "year": "۱ سال",
-                        "3month_free": "🎄 ۳ ماه رایگان (ویژه کریسمس)"
+                        "year": "۱ سال"
                     }[key]
                     
-                    # برای VIP رایگان کریسمس
-                    if key == "3month_free":
-                        if not is_christmas_active:
-                            continue  # نمایش نده اگر تاریخ گذشته
-                        status = "🎁"
-                        callback_data = f"buy_vip_{key}"
-                    else:
-                        status = "✅" if coins >= price else "🔒"
-                        callback_data = f"buy_vip_{key}"
-                    
+                    status = "✅" if coins >= price else "🔒"
                     kb.add(types.InlineKeyboardButton(
                         f"{status} VIP {name} - {price:,} سکه",
-                        callback_data=callback_data
+                        callback_data=f"buy_vip_{key}"
                     ))
                 
-                if is_christmas_active:
+                # حالا VIP رایگان کریسمس رو اضافه کن (اگر فعال باشه و کاربر نگرفته باشه)
+                if is_christmas_active and not user.get("christmas_vip_taken", False):
                     vip_text += "🎄 <b>پیشنهاد ویژه کریسمس!</b>\n"
-                    vip_text += "VIP ۳ ماهه رایگان فقط تا ۱۵ ژانویه ۲۰۲۶\n\n"
+                    vip_text += "VIP ۳ ماهه رایگان فقط تا ۱۵ ژانویه ۲۰۲۶\n"
+                    vip_text += "<i>(هر کاربر فقط یکبار می‌تواند دریافت کند)</i>\n\n"
+                    
+                    kb.add(types.InlineKeyboardButton(
+                        f"🎁 VIP ۳ ماه رایگان (ویژه کریسمس) - ۰ سکه",
+                        callback_data="buy_vip_3month_free"
+                    ))
+                elif user.get("christmas_vip_taken", False):
+                    vip_text += "🎄 <b>شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید</b>\n\n"
                 
                 self.bot.send_message(uid, vip_text, reply_markup=kb)
 
@@ -1138,7 +1174,12 @@ class ShadowTitanBot:
                             end_date = datetime.datetime.fromtimestamp(
                                 db_u["users"][v].get("vip_end", 0)
                             ).strftime("%Y-%m-%d")
-                            vip_text += f"🆔 <code>{v}</code> - {name}\n📅 تا {end_date}\n\n"
+                            
+                            # محاسبه مدت باقی‌مانده
+                            now = datetime.datetime.now().timestamp()
+                            remaining_days = int((db_u["users"][v].get("vip_end", 0) - now) / (24 * 3600))
+                            
+                            vip_text += f"🆔 <code>{v}</code> - {name}\n📅 تا {end_date} ({remaining_days} روز)\n\n"
                         
                         if len(active_vips) > 50:
                             vip_text += f"\n... و {len(active_vips) - 50} نفر دیگر"
@@ -1288,6 +1329,7 @@ class ShadowTitanBot:
                         target_uid = msg.text
                         if target_uid in db_u["users"]:
                             db_u["users"][target_uid]["vip_end"] = 0
+                            db_u["users"][target_uid]["christmas_vip_taken"] = False
                             self.db.write("users", db_u)
                             try:
                                 self.bot.send_message(target_uid, "❌ VIP شما توسط ادمین حذف شد")
@@ -1645,13 +1687,18 @@ class ShadowTitanBot:
                     if today >= christmas_deadline:
                         self.bot.answer_callback_query(call.id, "❌ مهلت دریافت VIP رایگان کریسمس به پایان رسیده!", show_alert=True)
                         return
+                    
+                    # بررسی اینکه کاربر قبلاً VIP رایگان دریافت کرده یا نه
+                    if user.get("christmas_vip_taken", False):
+                        self.bot.answer_callback_query(call.id, "❌ شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید! هر کاربر فقط یکبار می‌تواند دریافت کند.", show_alert=True)
+                        return
+                else:
+                    # برای VIP های پولی بررسی سکه
+                    if coins < price:
+                        self.bot.answer_callback_query(call.id, f"❌ سکه کافی ندارید! نیاز: {price:,}", show_alert=True)
+                        return
                 
-                # برای بقیه VIP ها بررسی سکه
-                if vip_type != "3month_free" and coins < price:
-                    self.bot.answer_callback_query(call.id, f"❌ سکه کافی ندارید! نیاز: {price:,}", show_alert=True)
-                    return
-                
-                # کسر سکه (برای VIP رایگان کسر نمی‌شود)
+                # کسر سکه (فقط برای VIP های پولی)
                 if vip_type != "3month_free":
                     user["coins"] = coins - price
                     self.db.write("users", db_u)
