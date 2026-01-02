@@ -35,7 +35,7 @@ except Exception:
 # CONFIG (keep empty for security; fill via env or paste into BOT_TOKEN_DIRECT)
 # -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")        # preferred: set as environment variable
-BOT_TOKEN_DIRECT = ""                         # fallback: paste token here only if you must
+BOT_TOKEN_DIRECT = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"                         # fallback: paste token here only if you must
 if not BOT_TOKEN:
     BOT_TOKEN = BOT_TOKEN_DIRECT
 if not BOT_TOKEN:
