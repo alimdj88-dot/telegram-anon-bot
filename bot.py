@@ -1,6 +1,3 @@
-# Shadow Titan Bot - نسخه کامل بدون باگ با سیستم ماموریت و رفرال
-
-```python
 import telebot
 from telebot import types
 import json
