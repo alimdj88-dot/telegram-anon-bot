@@ -1645,7 +1645,7 @@ class ShadowTitanBot:
                 self.bot.send_message(uid, missions_text)
                 self.bot.answer_callback_query(call.id, "✅ لیست ارسال شد")
 
-                                    elif call.data == "add_new_mission":
+            elif call.data == "add_new_mission":
                 if uid != self.owner:
                     return
                 self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
