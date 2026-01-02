@@ -126,7 +126,7 @@ class ShadowTitanBot:
             "3month": 5000,
             "6month": 9000,
             "year": 15000,
-            "3month_free": 0  # VIP رایگان ویژه کریسمس
+            "christmas_3month": 0  # VIP رایگان ویژه کریسمس - کلید تغییر یافته
         }
 
         # مدت‌های VIP به ثانیه
@@ -136,7 +136,7 @@ class ShadowTitanBot:
             "3month": 90 * 24 * 3600,
             "6month": 180 * 24 * 3600,
             "year": 365 * 24 * 3600,
-            "3month_free": 90 * 24 * 3600  # 3 ماه رایگان
+            "christmas_3month": 90 * 24 * 3600  # 3 ماه رایگان
         }
 
         # لیست فحش
@@ -246,7 +246,7 @@ class ShadowTitanBot:
         db_u["users"][uid]["vip_end"] = new_end
         
         # ذخیره اینکه کاربر VIP رایگان کریسمس را دریافت کرده
-        if duration_key == "3month_free":
+        if duration_key == "christmas_3month":
             db_u["users"][uid]["christmas_vip_taken"] = True
         
         self.db.write("users", db_u)
@@ -259,7 +259,7 @@ class ShadowTitanBot:
                 "3month": "۳ ماه",
                 "6month": "۶ ماه",
                 "year": "۱ سال",
-                "3month_free": "۳ ماه رایگان"
+                "christmas_3month": "۳ ماه رایگان"
             }.get(duration_key, "۳ ماه")
             
             # محاسبه مدت باقی‌مانده
@@ -1035,18 +1035,16 @@ class ShadowTitanBot:
                 kb = types.InlineKeyboardMarkup(row_width=1)
                 
                 # ابتدا VIP های پولی رو اضافه کن
-                for key, price in self.vip_prices_coins.items():
-                    if key == "3month_free":
-                        continue  # VIP رایگان رو جداگانه اضافه می‌کنیم
-                        
-                    name = {
-                        "week": "۱ هفته",
-                        "month": "۱ ماه",
-                        "3month": "۳ ماه",
-                        "6month": "۶ ماه",
-                        "year": "۱ سال"
-                    }[key]
-                    
+                vip_options = [
+                    ("week", "۱ هفته"),
+                    ("month", "۱ ماه"),
+                    ("3month", "۳ ماه"),
+                    ("6month", "۶ ماه"),
+                    ("year", "۱ سال")
+                ]
+                
+                for key, name in vip_options:
+                    price = self.vip_prices_coins[key]
                     status = "✅" if coins >= price else "🔒"
                     kb.add(types.InlineKeyboardButton(
                         f"{status} VIP {name} - {price:,} سکه",
@@ -1061,7 +1059,7 @@ class ShadowTitanBot:
                     
                     kb.add(types.InlineKeyboardButton(
                         f"🎁 VIP ۳ ماه رایگان (ویژه کریسمس) - ۰ سکه",
-                        callback_data="buy_vip_3month_free"
+                        callback_data="buy_vip_christmas_3month"
                     ))
                 elif user.get("christmas_vip_taken", False):
                     vip_text += "🎄 <b>شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید</b>\n\n"
@@ -1676,11 +1674,10 @@ class ShadowTitanBot:
             # خرید VIP با سکه
             elif call.data.startswith("buy_vip_"):
                 vip_type = call.data.split("_")[2]
-                price = self.vip_prices_coins.get(vip_type, 0)
-                coins = user.get("coins", 0)
                 
-                # بررسی ویژه برای VIP رایگان کریسمس
-                if vip_type == "3month_free":
+                # بررسی اگر VIP کریسمس است
+                if vip_type == "christmas":
+                    # VIP رایگان کریسمس
                     christmas_deadline = datetime.datetime(2026, 1, 15)
                     today = datetime.datetime.now()
                     
@@ -1692,16 +1689,23 @@ class ShadowTitanBot:
                     if user.get("christmas_vip_taken", False):
                         self.bot.answer_callback_query(call.id, "❌ شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید! هر کاربر فقط یکبار می‌تواند دریافت کند.", show_alert=True)
                         return
-                else:
-                    # برای VIP های پولی بررسی سکه
-                    if coins < price:
-                        self.bot.answer_callback_query(call.id, f"❌ سکه کافی ندارید! نیاز: {price:,}", show_alert=True)
-                        return
+                    
+                    # افزودن VIP رایگان کریسمس
+                    self.add_vip(uid, "christmas_3month", "هدیه کریسمس")
+                    self.bot.answer_callback_query(call.id, "✅ VIP رایگان کریسمس فعال شد!")
+                    return
                 
-                # کسر سکه (فقط برای VIP های پولی)
-                if vip_type != "3month_free":
-                    user["coins"] = coins - price
-                    self.db.write("users", db_u)
+                # VIP های پولی
+                price = self.vip_prices_coins.get(vip_type, 0)
+                coins = user.get("coins", 0)
+                
+                if coins < price:
+                    self.bot.answer_callback_query(call.id, f"❌ سکه کافی ندارید! نیاز: {price:,}", show_alert=True)
+                    return
+                
+                # کسر سکه
+                user["coins"] = coins - price
+                self.db.write("users", db_u)
                 
                 # افزودن VIP
                 reason_map = {
@@ -1709,8 +1713,7 @@ class ShadowTitanBot:
                     "month": "خرید با سکه", 
                     "3month": "خرید با سکه",
                     "6month": "خرید با سکه",
-                    "year": "خرید با سکه",
-                    "3month_free": "هدیه کریسمس"
+                    "year": "خرید با سکه"
                 }
                 
                 self.add_vip(uid, vip_type, reason_map.get(vip_type, "خرید با سکه"))
