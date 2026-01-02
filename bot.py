@@ -52,7 +52,7 @@ except Exception:
 # CONFIG (edit as needed)
 # -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")  # prefer env var
-BOT_TOKEN_DIRECT = ""  # e.g. "123456:ABC-DEF..." if you must paste (keep empty for safety)
+BOT_TOKEN_DIRECT = "8213706320:AAFH18CeAGRu-3Jkn8EZDYDhgSgDl_XMtvU"  # e.g. "123456:ABC-DEF..." if you must paste (keep empty for safety)
 if not BOT_TOKEN:
     BOT_TOKEN = BOT_TOKEN_DIRECT
 
