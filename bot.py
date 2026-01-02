@@ -252,22 +252,25 @@ class ShadowTitanBot:
             logger.error(f"خطا در ارسال پیام VIP به {uid}: {e}")
         return True
 
-    def add_coins(self, uid, amount, reason=""):
-        """افزودن سکه"""
-        db_u = self.db.read("users")
-        if uid not in db_u["users"]:
-            return False
-        db_u["users"][uid]["coins"] = db_u["users"][uid].get("coins", 0) + amount
-        self.db.write("users", db_u)
+    
         
-        try:
-            self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
-                                       f"مقدار: {amount:,} سکه\n"
-                                       f"دلیل: {reason}\n"
-                                       f"موجودی: {db_u['users'][uid]['coins']:,} سکه")
-        except Exception as e:
-            logger.error(f"خطا در ارسال پیام سکه به {uid}: {e}")
-        return True
+        def add_coins(self, uid, amount, reason=""):
+    """افزودن سکه"""
+    db_u = self.db.read("users")
+    if uid not in db_u["users"]:
+        return False
+    # Adding the coins to the user's account
+    db_u["users"][uid]["coins"] = db_u["users"][uid].get("coins", 0) + amount
+    self.db.write("users", db_u)
+
+    try:
+        self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
+                                   f"مقدار: {amount:,} سکه\n"
+                                   f"دلیل: {reason}\n"
+                                   f"موجودی: {db_u['users'][uid]['coins']:,} سکه")
+    except Exception as e:
+        logger.error(f"خطا در ارسال پیام سکه به {uid}: {e}")
+    return True
 
     def check_and_reward_mission(self, uid):
         """بررسی و پاداش ماموریت روزانه"""
