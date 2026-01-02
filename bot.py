@@ -1067,4 +1067,20 @@ class ShadowTitanBot:
                         bot.answer_callback_query(call.id, "پرداخت نامشخص")
                         return
                     safe_send(bot, int(self.owner), f"اعلام پرداخت دستی از {uid}\nکد: {payload}\nمبلغ: {pay.get('amount')}\nپلن: {pay.get('plan')}\nبرای تایید: /confirm_manual {payload}")
+                    except Exception as e:
+        logger.error("callback_handler error: %s", e)
+        logger.debug(traceback.format_exc())
+        try:
+            bot.answer_callback_query(call.id, "❌ خطای داخلی")
+        except:
+            pass
        
+if __name__ == "__main__":
+    try:
+        app = ShadowTitanBot(BOT_TOKEN)
+        print("Bot is running...")
+        app.bot.infinity_polling(skip_pending=True)
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
+    except Exception as e:
+        print("Fatal error:", e)
