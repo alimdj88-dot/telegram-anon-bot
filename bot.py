@@ -14,6 +14,7 @@ import pickle
 import base64
 import sqlite3
 import queue
+import traceback
 from flask import Flask
 from threading import Thread, Timer
 from zoneinfo import ZoneInfo
@@ -178,6 +179,9 @@ class SecureDatabase:
                 coins INTEGER DEFAULT 0,
                 total_referrals INTEGER DEFAULT 0,
                 warns INTEGER DEFAULT 0,
+                age INTEGER DEFAULT 0,
+                gender TEXT DEFAULT '',
+                country TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_banned INTEGER DEFAULT 0,
@@ -262,7 +266,8 @@ class SecureDatabase:
                 salt TEXT,
                 permissions TEXT DEFAULT 'basic',
                 two_factor_enabled INTEGER DEFAULT 0,
-                last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_login TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active INTEGER DEFAULT 1
             )
         ''')
         
@@ -322,6 +327,31 @@ class SecureDatabase:
             )
         ''')
         
+        # جدول جدید: تنظیمات عمومی
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setting_name TEXT UNIQUE,
+                setting_value TEXT,
+                description TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_by TEXT
+            )
+        ''')
+        
+        # جدول جدید: ارسال‌های همگانی
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS broadcasts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                admin_id TEXT,
+                message_text TEXT,
+                sent_to_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                sent_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'pending'
+            )
+        ''')
+        
         conn.commit()
         conn.close()
         
@@ -344,6 +374,8 @@ class SecureDatabase:
             "CREATE INDEX IF NOT EXISTS idx_discounts_active ON discounts(is_active, end_date)",
             "CREATE INDEX IF NOT EXISTS idx_events_active ON events(is_active, end_date)",
             "CREATE INDEX IF NOT EXISTS idx_discounts_vip_type ON discounts(vip_type, is_active)",
+            "CREATE INDEX IF NOT EXISTS idx_users_gender ON users(gender)",
+            "CREATE INDEX IF NOT EXISTS idx_users_country ON users(country)",
         ]
         
         for index_sql in indexes:
@@ -434,13 +466,16 @@ class SecureDatabase:
         
         cursor.execute('''
             INSERT OR REPLACE INTO users 
-            (user_id, encrypted_data, vip_end, coins, total_referrals, warns, last_active)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            (user_id, encrypted_data, vip_end, coins, total_referrals, warns, age, gender, country, last_active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ''', (user_id, encrypted_data, 
               user_data.get('vip_end', 0),
               user_data.get('coins', 0),
               user_data.get('total_referrals', 0),
-              user_data.get('warns', 0)))
+              user_data.get('warns', 0),
+              user_data.get('age', 0),
+              user_data.get('gender', ''),
+              user_data.get('country', '')))
         
         conn.commit()
         conn.close()
@@ -468,6 +503,9 @@ class SecureDatabase:
             user_data['coins'] = row['coins']
             user_data['total_referrals'] = row['total_referrals']
             user_data['warns'] = row['warns']
+            user_data['age'] = row['age']
+            user_data['gender'] = row['gender']
+            user_data['country'] = row['country']
             user_data['is_banned'] = row['is_banned']
             user_data['ban_reason'] = row['ban_reason']
             
@@ -681,6 +719,84 @@ class SecureDatabase:
         conn.commit()
         conn.close()
         return True
+
+    # متدهای جدید برای تنظیمات عمومی
+    def get_setting(self, setting_name):
+        """دریافت تنظیم"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT setting_value FROM settings WHERE setting_name = ?', (setting_name,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return row['setting_value']
+        return None
+    
+    def update_setting(self, setting_name, setting_value, description="", updated_by=""):
+        """به‌روزرسانی تنظیم"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings 
+            (setting_name, setting_value, description, updated_by, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ''', (setting_name, setting_value, description, updated_by))
+        
+        conn.commit()
+        conn.close()
+        return True
+
+    # متدهای جدید برای مدیریت ادمین‌ها
+    def add_admin(self, user_id, password, permissions="basic"):
+        """افزودن ادمین جدید"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # هش کردن رمز عبور
+        encryption = AdvancedEncryption()
+        hashed_password, salt = encryption.hash_password(password)
+        
+        cursor.execute('''
+            INSERT OR REPLACE INTO admins 
+            (user_id, encrypted_password, salt, permissions, last_login, is_active)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, 1)
+        ''', (user_id, hashed_password, salt, permissions))
+        
+        conn.commit()
+        conn.close()
+        return True
+    
+    def verify_admin(self, user_id, password):
+        """تأیید هویت ادمین"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT encrypted_password, salt FROM admins WHERE user_id = ? AND is_active = 1', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return False
+        
+        # تأیید رمز عبور
+        encryption = AdvancedEncryption()
+        hashed_password, _ = encryption.hash_password(password, bytes.fromhex(row['salt']))
+        
+        return hashed_password == row['encrypted_password']
+    
+    def is_admin(self, user_id):
+        """بررسی اینکه آیا کاربر ادمین است"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT 1 FROM admins WHERE user_id = ? AND is_active = 1', (user_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        return row is not None
 
 # ==========================================
 # سیستم Rate Limiting پیشرفته
@@ -897,7 +1013,7 @@ class VIPManager:
             "3month": 90 * 24 * 3600,
             "6month": 180 * 24 * 3600,
             "year": 365 * 24 * 3600,
-            "christmas": 90 * 24 * 3600
+            "christmas": 90 * 24 * 3600  # 3 ماه رایگان
         }
         
         # نام‌های فارسی انواع VIP
@@ -907,7 +1023,7 @@ class VIPManager:
             "3month": "۳ ماه",
             "6month": "۶ ماه",
             "year": "۱ سال",
-            "christmas": "۳ ماه رایگان"
+            "christmas": "۳ ماه رایگان (ویژه کریسمس)"
         }
         
         # ویژگی‌های VIP بر اساس سطح
@@ -960,6 +1076,22 @@ class VIPManager:
     def get_vip_plans_with_discounts(self):
         """دریافت همه پلن‌های VIP با تخفیف‌ها"""
         plans = []
+        
+        # اضافه کردن VIP رایگان کریسمس
+        christmas_plan = {
+            'type': 'christmas',
+            'name': self.vip_names['christmas'],
+            'original_price': 0,
+            'final_price': 0,
+            'discount': 100,
+            'duration': self.vip_durations['christmas'],
+            'duration_text': self.vip_names['christmas'],
+            'has_discount': True,
+            'features': self.vip_features["basic"] + self.vip_features["premium"] + self.vip_features["exclusive"],
+            'level': "exclusive",
+            'is_free': True
+        }
+        plans.append(christmas_plan)
         
         for vip_type in ["week", "month", "3month", "6month", "year"]:
             final_price, discount_percentage, original_price = self.get_final_price(vip_type)
@@ -1088,6 +1220,40 @@ class VIPManager:
             return message
         
         return None
+    
+    def gift_vip(self, user_id, vip_type, duration_days=None):
+        """هدیه دادن VIP به کاربر"""
+        user = self.db.get_user(user_id)
+        if not user:
+            return False, "کاربر یافت نشد"
+        
+        # محاسبه مدت VIP
+        if duration_days:
+            duration_seconds = duration_days * 24 * 3600
+        else:
+            duration_seconds = self.vip_durations.get(vip_type, 30 * 24 * 3600)  # پیش‌فرض ۱ ماه
+        
+        # افزودن VIP
+        vip_end = user.get('vip_end', 0)
+        now = time.time()
+        if vip_end < now:
+            vip_end = now
+        user['vip_end'] = vip_end + duration_seconds
+        
+        self.db.save_user(user_id, user)
+        
+        return True, f"VIP با موفقیت به کاربر هدیه داده شد. مدت: {duration_days if duration_days else 'پیش‌فرض'} روز"
+    
+    def remove_vip(self, user_id):
+        """حذف VIP از کاربر"""
+        user = self.db.get_user(user_id)
+        if not user:
+            return False, "کاربر یافت نشد"
+        
+        user['vip_end'] = 0
+        self.db.save_user(user_id, user)
+        
+        return True, "VIP کاربر با موفقیت حذف شد"
 
 # ==========================================
 # سیستم مدیریت رویدادها
@@ -1295,6 +1461,97 @@ class MaintenanceManager:
         return info_text, settings
 
 # ==========================================
+# سیستم مدیریت ادمین‌ها و احراز هویت
+# ==========================================
+class AdminManager:
+    def __init__(self, db):
+        self.db = db
+        self.admin_sessions = {}  # {user_id: session_data}
+        
+    def authenticate_admin(self, user_id, password):
+        """احراز هویت ادمین"""
+        return self.db.verify_admin(user_id, password)
+    
+    def is_admin_authenticated(self, user_id):
+        """بررسی احراز هویت ادمین"""
+        if user_id in self.admin_sessions:
+            session_time = self.admin_sessions[user_id].get('auth_time', 0)
+            if time.time() - session_time < 3600:  # 1 ساعت اعتبار
+                return True
+            else:
+                del self.admin_sessions[user_id]
+        return False
+    
+    def create_admin_session(self, user_id):
+        """ایجاد سشن ادمین"""
+        self.admin_sessions[user_id] = {
+            'auth_time': time.time(),
+            'last_activity': time.time()
+        }
+    
+    def logout_admin(self, user_id):
+        """خروج ادمین"""
+        if user_id in self.admin_sessions:
+            del self.admin_sessions[user_id]
+    
+    def update_admin_activity(self, user_id):
+        """به‌روزرسانی فعالیت ادمین"""
+        if user_id in self.admin_sessions:
+            self.admin_sessions[user_id]['last_activity'] = time.time()
+
+# ==========================================
+# سیستم ارسال همگانی
+# ==========================================
+class BroadcastManager:
+    def __init__(self, db, bot):
+        self.db = db
+        self.bot = bot
+    
+    def send_broadcast(self, admin_id, message_text, target_users="all"):
+        """ارسال پیام همگانی"""
+        try:
+            users = self.db.get_all_users(limit=10000)
+            sent_count = 0
+            failed_count = 0
+            
+            for user in users:
+                try:
+                    if 'user_id' in user:
+                        self.bot.send_message(user['user_id'], message_text)
+                        sent_count += 1
+                except Exception as e:
+                    logger.error(f"Broadcast failed for {user.get('user_id', 'unknown')}: {e}")
+                    failed_count += 1
+            
+            return True, f"پیام به {sent_count} کاربر ارسال شد. {failed_count} ارسال ناموفق."
+        
+        except Exception as e:
+            logger.error(f"Broadcast error: {e}")
+            return False, f"خطا در ارسال همگانی: {e}"
+    
+    def send_to_vip_users(self, admin_id, message_text):
+        """ارسال پیام به کاربران VIP"""
+        try:
+            users = self.db.get_all_users(limit=10000)
+            sent_count = 0
+            failed_count = 0
+            
+            for user in users:
+                try:
+                    if 'user_id' in user and user.get('vip_end', 0) > time.time():
+                        self.bot.send_message(user['user_id'], message_text)
+                        sent_count += 1
+                except Exception as e:
+                    logger.error(f"VIP broadcast failed for {user.get('user_id', 'unknown')}: {e}")
+                    failed_count += 0
+            
+            return True, f"پیام به {sent_count} کاربر VIP ارسال شد. {failed_count} ارسال ناموفق."
+        
+        except Exception as e:
+            logger.error(f"VIP broadcast error: {e}")
+            return False, f"خطا در ارسال به VIP ها: {e}"
+
+# ==========================================
 # ربات اصلی با قابلیت‌های مدیریتی کامل
 # ==========================================
 class ShadowTitanBotEnhanced:
@@ -1304,6 +1561,7 @@ class ShadowTitanBotEnhanced:
         self.owner = "8013245091"
         self.channel = "@ChatNaAnnouncements"
         self.support = "@its_alimo"
+        self.admin_password = "ShadowTitan42"  # رمز عبور پیش‌فرض ادمین
         
         # سیستم‌های پیشرفته
         self.db = SecureDatabase()
@@ -1313,9 +1571,11 @@ class ShadowTitanBotEnhanced:
         self.event_manager = EventManager(self.db)
         self.discount_manager = DiscountManager(self.db)
         self.maintenance_manager = MaintenanceManager(self.db)
+        self.admin_manager = AdminManager(self.db)
+        self.broadcast_manager = None
         
-        # لیست ادمین‌ها
-        self.admins = ["8013245091"]
+        # لیست ادمین‌های اصلی
+        self.master_admins = ["8013245091"]
         
         # کانفیگ
         self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
@@ -1323,12 +1583,18 @@ class ShadowTitanBotEnhanced:
         
         # Stateهای مدیریتی
         self.admin_states = {}  # {admin_id: state_data}
+        self.user_states = {}   # {user_id: state_data}
         
         # شروع سیستم‌ها
         self.register_handlers()
         self.start_background_tasks()
+        self.broadcast_manager = BroadcastManager(self.db, self.bot)
         
         logger.info("🤖 Shadow Titan v42.2 Ultimate Management Edition Started")
+    
+    def __hide_token(self, text):
+        """مخفی کردن توکن در لاگ‌ها"""
+        return re.sub(self.token, 'TOKEN_HIDDEN', text)
     
     def start_background_tasks(self):
         """شروع وظایف پس‌زمینه"""
@@ -1398,11 +1664,19 @@ class ShadowTitanBotEnhanced:
         if active_events:
             markup.add("🎪 رویدادهای ویژه")
         
-        markup.add("❓ راهنما")
+        markup.add("⚙ تنظیمات", "❓ راهنما")
         
-        if uid in self.admins:
+        if self.admin_manager.is_admin_authenticated(uid) or uid in self.master_admins:
             markup.add("🛡️ پنل مدیریت")
         
+        return markup
+    
+    def kb_settings(self):
+        """کیبورد تنظیمات"""
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("📝 تغییر نام", "🎭 تغییر جنسیت")
+        markup.add("🌍 تغییر کشور", "🔕 مدیریت نوتیفیکیشن")
+        markup.add("🔙 بازگشت به منو")
         return markup
     
     def kb_admin_main(self):
@@ -1411,7 +1685,9 @@ class ShadowTitanBotEnhanced:
         markup.add("📊 آمار کامل", "👥 مدیریت کاربران")
         markup.add("🎖 مدیریت VIP", "💰 مدیریت تخفیف‌ها")
         markup.add("🎪 مدیریت رویدادها", "🔧 مدیریت تعمیر")
+        markup.add("📣 ارسال همگانی", "⚙ تنظیمات سیستمی")
         markup.add("📁 مدیریت فایل‌ها", "🚫 مدیریت بن‌ها")
+        markup.add("🔐 مدیریت ادمین‌ها", "📈 گزارشات مالی")
         markup.add("🔙 بازگشت به منو")
         return markup
     
@@ -1423,8 +1699,15 @@ class ShadowTitanBotEnhanced:
             types.InlineKeyboardButton("🎁 گیفت VIP", callback_data="admin_gift_vip")
         )
         markup.add(
+            types.InlineKeyboardButton("🗑 حذف VIP", callback_data="admin_remove_vip"),
+            types.InlineKeyboardButton("📤 ارسال به VIP ها", callback_data="admin_broadcast_vip")
+        )
+        markup.add(
             types.InlineKeyboardButton("📊 آمار فروش", callback_data="admin_vip_stats"),
             types.InlineKeyboardButton("⚙ تنظیمات قیمت", callback_data="admin_price_settings")
+        )
+        markup.add(
+            types.InlineKeyboardButton("🎅 VIP رایگان کریسمس", callback_data="admin_christmas_vip")
         )
         return markup
     
@@ -1444,32 +1727,51 @@ class ShadowTitanBotEnhanced:
         )
         return markup
     
-    def kb_event_management(self):
-        """کیبورد مدیریت رویدادها"""
+    def kb_broadcast_management(self):
+        """کیبورد ارسال همگانی"""
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("➕ ایجاد رویداد", callback_data="admin_create_event"),
-            types.InlineKeyboardButton("🗑 حذف رویداد", callback_data="admin_remove_event")
+            types.InlineKeyboardButton("📢 ارسال به همه", callback_data="admin_broadcast_all"),
+            types.InlineKeyboardButton("👑 ارسال به VIP ها", callback_data="admin_broadcast_vip_only")
         )
         markup.add(
-            types.InlineKeyboardButton("📋 رویدادهای فعال", callback_data="admin_active_events"),
-            types.InlineKeyboardButton("➕ افزودن پلن ویژه", callback_data="admin_add_event_plan")
+            types.InlineKeyboardButton("👥 ارسال به غیر-VIP", callback_data="admin_broadcast_non_vip"),
+            types.InlineKeyboardButton("🌍 ارسال بر اساس کشور", callback_data="admin_broadcast_country")
         )
         markup.add(
-            types.InlineKeyboardButton("📊 آمار رویدادها", callback_data="admin_event_stats")
+            types.InlineKeyboardButton("📊 آمار ارسال‌ها", callback_data="admin_broadcast_stats")
         )
         return markup
     
-    def kb_maintenance_management(self):
-        """کیبورد مدیریت تعمیر"""
+    def kb_admin_management(self):
+        """کیبورد مدیریت ادمین‌ها"""
         markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
-            types.InlineKeyboardButton("🔧 تنظیم حالت تعمیر", callback_data="admin_set_maintenance"),
-            types.InlineKeyboardButton("❌ غیرفعال کردن", callback_data="admin_disable_maintenance")
+            types.InlineKeyboardButton("➕ افزودن ادمین", callback_data="admin_add_admin"),
+            types.InlineKeyboardButton("🗑 حذف ادمین", callback_data="admin_remove_admin")
         )
         markup.add(
-            types.InlineKeyboardButton("📊 وضعیت فعلی", callback_data="admin_maintenance_status"),
-            types.InlineKeyboardButton("⚙ تنظیمات دسترسی", callback_data="admin_access_settings")
+            types.InlineKeyboardButton("📋 لیست ادمین‌ها", callback_data="admin_list_admins"),
+            types.InlineKeyboardButton("🔑 تغییر رمز ادمین", callback_data="admin_change_password")
+        )
+        markup.add(
+            types.InlineKeyboardButton("🔐 تنظیمات دسترسی", callback_data="admin_permissions")
+        )
+        return markup
+    
+    def kb_system_settings(self):
+        """کیبورد تنظیمات سیستمی"""
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("⚙ تنظیمات عمومی", callback_data="admin_general_settings"),
+            types.InlineKeyboardButton("🔒 تنظیمات امنیتی", callback_data="admin_security_settings")
+        )
+        markup.add(
+            types.InlineKeyboardButton("💎 تنظیمات VIP", callback_data="admin_vip_settings"),
+            types.InlineKeyboardButton("🎯 تنظیمات ماموریت", callback_data="admin_mission_settings")
+        )
+        markup.add(
+            types.InlineKeyboardButton("📈 تنظیمات مالی", callback_data="admin_financial_settings")
         )
         return markup
     
@@ -1479,108 +1781,156 @@ class ShadowTitanBotEnhanced:
     def register_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start(msg):
-            uid = str(msg.chat.id)
+            try:
+                uid = str(msg.chat.id)
+                
+                # بررسی دسترسی در حالت تعمیر
+                user = self.db.get_user(uid)
+                is_vip = user and user.get('vip_end', 0) > time.time()
+                has_access, error_msg = self.maintenance_manager.check_access(uid, is_vip)
+                
+                if not has_access:
+                    self.bot.send_message(uid, f"🚫 {error_msg}")
+                    return
+                
+                # بررسی Rate Limiting
+                allowed, message = self.rate_limiter.check_rate_limit(uid, 'general')
+                if not allowed:
+                    self.bot.send_message(uid, f"⏳ {message}")
+                    return
+                
+                payload = msg.text.split(maxsplit=1)[1] if len(msg.text.split()) > 1 else None
+                
+                # پردازش لینک‌های ویژه
+                if payload:
+                    if payload.startswith('ref_'):
+                        self.handle_referral(uid, payload[4:])
+                    elif payload.startswith('msg_'):
+                        self.handle_anonymous_link(uid, payload[4:])
+                    elif payload.startswith('event_'):
+                        self.handle_event_link(uid, payload[6:])
+                
+                # ثبت‌نام یا خوش‌آمدگویی
+                if not user:
+                    self.register_new_user(uid, msg)
+                else:
+                    self.welcome_back_user(uid, user)
             
-            # بررسی دسترسی در حالت تعمیر
-            user = self.db.get_user(uid)
-            is_vip = user and user.get('vip_end', 0) > time.time()
-            has_access, error_msg = self.maintenance_manager.check_access(uid, is_vip)
-            
-            if not has_access:
-                self.bot.send_message(uid, f"🚫 {error_msg}")
-                return
-            
-            # بررسی Rate Limiting
-            allowed, message = self.rate_limiter.check_rate_limit(uid, 'general')
-            if not allowed:
-                self.bot.send_message(uid, f"⏳ {message}")
-                return
-            
-            payload = msg.text.split(maxsplit=1)[1] if len(msg.text.split()) > 1 else None
-            
-            # پردازش لینک‌های ویژه
-            if payload:
-                if payload.startswith('ref_'):
-                    self.handle_referral(uid, payload[4:])
-                elif payload.startswith('msg_'):
-                    self.handle_anonymous_link(uid, payload[4:])
-                elif payload.startswith('event_'):
-                    self.handle_event_link(uid, payload[6:])
-            
-            # ثبت‌نام یا خوش‌آمدگویی
-            if not user:
-                self.register_new_user(uid, msg)
-            else:
-                self.welcome_back_user(uid, user)
+            except Exception as e:
+                logger.error(f"Error in start handler: {e}")
+                logger.error("Exception traceback:\n%s", self.__hide_token(traceback.format_exc()))
         
         @self.bot.message_handler(func=lambda msg: True)
         def all_messages(msg):
-            uid = str(msg.chat.id)
-            text = msg.text
-            
-            if not text:
-                return
-            
-            # بررسی دسترسی در حالت تعمیر
-            user = self.db.get_user(uid)
-            is_vip = user and user.get('vip_end', 0) > time.time()
-            has_access, error_msg = self.maintenance_manager.check_access(uid, is_vip)
-            
-            if not has_access:
-                self.bot.send_message(uid, f"🚫 {error_msg}")
-                return
-            
-            # بررسی Rate Limiting
-            allowed, message = self.rate_limiter.check_rate_limit(uid, 'message')
-            if not allowed:
-                self.bot.send_message(uid, f"⏳ {message}")
-                return
-            
-            # بررسی امنیتی
-            is_dangerous, analysis = self.persian_ai.contains_inappropriate_content(text)
-            if is_dangerous:
-                self.handle_inappropriate_content(uid, analysis)
-                return
-            
-            # بررسی ثبت نام
-            if user and user.get('state') == 'waiting_for_name':
-                self.process_registration_name(uid, text)
-                return
-            
-            # پردازش دستورات مدیریتی
-            if uid in self.admins:
-                if text == "🛡️ پنل مدیریت":
-                    self.show_admin_panel(uid)
-                    return
-                elif text == "🔙 بازگشت به منو":
-                    self.bot.send_message(uid, "🏠 منوی اصلی", reply_markup=self.kb_main(uid))
+            try:
+                uid = str(msg.chat.id)
+                text = msg.text
+                
+                if not text:
                     return
                 
-                # بررسی stateهای مدیریتی
-                if uid in self.admin_states:
-                    self.handle_admin_state(uid, text)
+                # بررسی دسترسی در حالت تعمیر
+                user = self.db.get_user(uid)
+                is_vip = user and user.get('vip_end', 0) > time.time()
+                has_access, error_msg = self.maintenance_manager.check_access(uid, is_vip)
+                
+                if not has_access:
+                    self.bot.send_message(uid, f"🚫 {error_msg}")
                     return
+                
+                # بررسی Rate Limiting
+                allowed, message = self.rate_limiter.check_rate_limit(uid, 'message')
+                if not allowed:
+                    self.bot.send_message(uid, f"⏳ {message}")
+                    return
+                
+                # بررسی امنیتی
+                is_dangerous, analysis = self.persian_ai.contains_inappropriate_content(text)
+                if is_dangerous:
+                    self.handle_inappropriate_content(uid, analysis)
+                    return
+                
+                # پردازش stateهای کاربر
+                if uid in self.user_states:
+                    state_handled = self.handle_user_state(uid, text, user)
+                    if state_handled:
+                        return
+                
+                # پردازش احراز هویت ادمین
+                if (uid in self.master_admins or self.db.is_admin(uid)) and not self.admin_manager.is_admin_authenticated(uid):
+                    if text == "🛡️ پنل مدیریت":
+                        self.request_admin_auth(uid)
+                        return
+                
+                # پردازش دستورات مدیریتی
+                if self.admin_manager.is_admin_authenticated(uid) or uid in self.master_admins:
+                    if text == "🛡️ پنل مدیریت":
+                        self.show_admin_panel(uid)
+                        return
+                    elif text == "🔙 بازگشت به منو":
+                        self.bot.send_message(uid, "🏠 منوی اصلی", reply_markup=self.kb_main(uid))
+                        return
+                    elif text == "⚙ تنظیمات سیستمی":
+                        self.show_system_settings(uid)
+                        return
+                    
+                    # بررسی stateهای مدیریتی
+                    if uid in self.admin_states:
+                        state_handled = self.handle_admin_state(uid, text)
+                        if state_handled:
+                            return
+                
+                # پردازش دستورات کاربری
+                self.handle_user_command(uid, text, user)
             
-            # پردازش دستورات کاربری
-            self.handle_user_command(uid, text, user)
+            except Exception as e:
+                logger.error(f"Error in message handler: {e}")
+                logger.error("Exception traceback:\n%s", self.__hide_token(traceback.format_exc()))
     
-    def process_registration_name(self, uid, name):
-        """پردازش نام کاربر در ثبت نام"""
-        user = self.db.get_user(uid)
-        if user:
-            user['name'] = name
-            user['state'] = 'registered'
-            self.db.save_user(uid, user)
-            
-            self.bot.send_message(uid, f"✅ ثبت نام شما با نام '{name}' تکمیل شد!", reply_markup=self.kb_main(uid))
-            self.welcome_back_user(uid, user)
+    def handle_user_state(self, uid, text, user):
+        """پردازش stateهای کاربر"""
+        state_data = self.user_states[uid]
+        state = state_data.get('state')
+        
+        if state == 'waiting_for_name':
+            self.process_user_name(uid, text)
+            return True
+        
+        elif state == 'waiting_for_age':
+            self.process_user_age(uid, text)
+            return True
+        
+        elif state == 'waiting_for_gender':
+            self.process_user_gender(uid, text)
+            return True
+        
+        elif state == 'waiting_for_country':
+            self.process_user_country(uid, text)
+            return True
+        
+        elif state == 'changing_name':
+            self.process_change_name(uid, text)
+            return True
+        
+        elif state == 'changing_gender':
+            self.process_change_gender(uid, text)
+            return True
+        
+        elif state == 'changing_country':
+            self.process_change_country(uid, text)
+            return True
+        
+        return False
     
     def handle_admin_state(self, uid, text):
         """پردازش stateهای مدیریتی"""
         state_data = self.admin_states[uid]
         state = state_data.get('state')
         
-        if state == 'waiting_for_discount_vip_type':
+        if state == 'waiting_for_admin_password':
+            self.process_admin_password(uid, text)
+        
+        elif state == 'waiting_for_discount_vip_type':
             self.process_discount_vip_type(uid, text)
         
         elif state == 'waiting_for_discount_percentage':
@@ -1615,6 +1965,32 @@ class ShadowTitanBotEnhanced:
         
         elif state == 'waiting_for_maintenance_dates':
             self.process_maintenance_dates(uid, text)
+        
+        elif state == 'waiting_for_broadcast_message':
+            self.process_broadcast_message(uid, text)
+        
+        elif state == 'waiting_for_gift_vip_user':
+            self.process_gift_vip_user(uid, text)
+        
+        elif state == 'waiting_for_gift_vip_type':
+            self.process_gift_vip_type(uid, text)
+        
+        elif state == 'waiting_for_gift_vip_duration':
+            self.process_gift_vip_duration(uid, text)
+        
+        elif state == 'waiting_for_remove_vip_user':
+            self.process_remove_vip_user(uid, text)
+        
+        elif state == 'waiting_for_admin_username':
+            self.process_admin_username(uid, text)
+        
+        elif state == 'waiting_for_admin_password_new':
+            self.process_admin_password_new(uid, text)
+        
+        elif state == 'waiting_for_admin_permissions':
+            self.process_admin_permissions(uid, text)
+        
+        return True
     
     def handle_user_command(self, uid, text, user):
         """پردازش دستورات کاربری"""
@@ -1645,574 +2021,626 @@ class ShadowTitanBotEnhanced:
         elif text == "📥 پیام‌های ناشناس":
             self.show_anonymous_messages(uid)
         
+        elif text == "⚙ تنظیمات":
+            self.show_user_settings(uid)
+        
         elif text == "❓ راهنما":
             self.show_help(uid)
         
         elif text == "🛰 شروع چت ناشناس":
             self.start_chat_search(uid, user)
         
-        elif text == "💰 مدیریت تخفیف‌ها":
-            self.show_discount_management(uid)
+        elif text == "📝 تغییر نام":
+            self.start_change_name(uid)
         
-        elif text == "🎪 مدیریت رویدادها":
-            self.show_event_management(uid)
+        elif text == "🎭 تغییر جنسیت":
+            self.start_change_gender(uid)
         
-        elif text == "🔧 مدیریت تعمیر":
-            self.show_maintenance_management(uid)
+        elif text == "🌍 تغییر کشور":
+            self.start_change_country(uid)
+        
+        elif text == "🔙 بازگشت به منو":
+            self.bot.send_message(uid, "🏠 منوی اصلی", reply_markup=self.kb_main(uid))
         
         else:
             self.bot.send_message(uid, "🤔 دستور نامعتبر است. لطفاً از دکمه‌های منو استفاده کنید.")
     
     # ==========================================
-    # سیستم مدیریت تخفیف‌ها
+    # سیستم ثبت نام کاربر
     # ==========================================
-    def show_discount_management(self, uid):
-        """نمایش مدیریت تخفیف‌ها"""
-        markup = self.kb_discount_management()
-        self.bot.send_message(uid, "💰 <b>مدیریت تخفیف‌ها</b>\n\nلطفا عمل مورد نظر را انتخاب کنید:", reply_markup=markup)
+    def register_new_user(self, uid, msg):
+        """ثبت‌نام کاربر جدید"""
+        welcome_msg = """
+🌟 <b>به Shadow Titan خوش آمدید!</b>
+
+ربات چت ناشناس پیشرفته با امکانات ویژه
+
+🔹 <b>لطفاً اطلاعات خود را وارد کنید:</b>
+"""
+        self.bot.send_message(uid, welcome_msg)
+        
+        # شروع فرآیند ثبت نام
+        self.user_states[uid] = {
+            'state': 'waiting_for_name',
+            'step': 1
+        }
+        
+        self.bot.send_message(uid, "📛 <b>لطفاً نام مستعار خود را وارد کنید:</b>")
     
-    def start_add_discount(self, uid):
-        """شروع فرآیند افزودن تخفیف"""
+    def process_user_name(self, uid, text):
+        """پردازش نام کاربر"""
+        if len(text) < 2 or len(text) > 30:
+            self.bot.send_message(uid, "❌ نام باید بین ۲ تا ۳۰ کاراکتر باشد. لطفاً مجدد وارد کنید:")
+            return
+        
+        self.user_states[uid]['name'] = text
+        self.user_states[uid]['state'] = 'waiting_for_age'
+        self.user_states[uid]['step'] = 2
+        
+        self.bot.send_message(uid, f"✅ نام شما ثبت شد: <b>{text}</b>\n\n📅 <b>لطفاً سن خود را وارد کنید:</b>")
+    
+    def process_user_age(self, uid, text):
+        """پردازش سن کاربر"""
+        try:
+            age = int(text)
+            if age < 10 or age > 100:
+                raise ValueError
+        except:
+            self.bot.send_message(uid, "❌ سن نامعتبر است. لطفاً عددی بین ۱۰ تا ۱۰۰ وارد کنید:")
+            return
+        
+        self.user_states[uid]['age'] = age
+        self.user_states[uid]['state'] = 'waiting_for_gender'
+        self.user_states[uid]['step'] = 3
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("👨 مرد", "👩 زن")
+        markup.add("🤖 سایر")
+        
+        self.bot.send_message(uid, f"✅ سن شما ثبت شد: <b>{age}</b>\n\n🎭 <b>لطفاً جنسیت خود را انتخاب کنید:</b>", reply_markup=markup)
+    
+    def process_user_gender(self, uid, text):
+        """پردازش جنسیت کاربر"""
+        gender_map = {
+            "👨 مرد": "مرد",
+            "👩 زن": "زن",
+            "🤖 سایر": "سایر"
+        }
+        
+        gender = gender_map.get(text)
+        if not gender:
+            self.bot.send_message(uid, "❌ لطفاً جنسیت را از گزینه‌ها انتخاب کنید.")
+            return
+        
+        self.user_states[uid]['gender'] = gender
+        self.user_states[uid]['state'] = 'waiting_for_country'
+        self.user_states[uid]['step'] = 4
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        countries = ["ایران", "آمریکا", "کانادا", "انگلیس", "آلمان", "ترکیه", "امارات", "هند", "چین", "روسیه", "سایر"]
+        for country in countries:
+            markup.add(country)
+        
+        self.bot.send_message(uid, f"✅ جنسیت شما ثبت شد: <b>{gender}</b>\n\n🌍 <b>لطفاً کشور خود را انتخاب کنید:</b>", reply_markup=markup)
+    
+    def process_user_country(self, uid, text):
+        """پردازش کشور کاربر"""
+        if len(text) < 2:
+            self.bot.send_message(uid, "❌ نام کشور نامعتبر است. لطفاً مجدد وارد کنید:")
+            return
+        
+        # ذخیره اطلاعات کاربر
+        state_data = self.user_states[uid]
+        
+        user_data = {
+            'name': state_data['name'],
+            'age': state_data['age'],
+            'gender': state_data['gender'],
+            'country': text,
+            'vip_end': 0,
+            'coins': 100,  # سکه هدیه ثبت‌نام
+            'total_referrals': 0,
+            'warns': 0,
+            'created_at': time.time(),
+            'is_banned': 0,
+            'ban_reason': ''
+        }
+        
+        self.db.save_user(uid, user_data)
+        
+        # پاک کردن state
+        del self.user_states[uid]
+        
+        # نمایش پیام خوش‌آمدگویی
+        welcome_msg = f"""
+✅ <b>ثبت‌نام شما تکمیل شد!</b>
+
+📛 <b>نام:</b> {user_data['name']}
+📅 <b>سن:</b> {user_data['age']}
+🎭 <b>جنسیت:</b> {user_data['gender']}
+🌍 <b>کشور:</b> {user_data['country']}
+💰 <b>سکه هدیه:</b> {user_data['coins']:,}
+
+🎉 اکنون می‌توانید از امکانات ربات استفاده کنید.
+        """
+        
+        self.bot.send_message(uid, welcome_msg, reply_markup=self.kb_main(uid))
+        
+        # لاگ ثبت‌نام
+        logger.info(f"New user registered: {uid} - {user_data['name']}")
+    
+    # ==========================================
+    # سیستم تنظیمات کاربر
+    # ==========================================
+    def show_user_settings(self, uid):
+        """نمایش تنظیمات کاربر"""
+        user = self.db.get_user(uid)
+        if not user:
+            self.bot.send_message(uid, "❌ کاربر یافت نشد!")
+            return
+        
+        settings_msg = f"""
+⚙ <b>تنظیمات حساب کاربری</b>
+
+📛 <b>نام:</b> {user.get('name', 'نامشخص')}
+📅 <b>سن:</b> {user.get('age', 'نامشخص')}
+🎭 <b>جنسیت:</b> {user.get('gender', 'نامشخص')}
+🌍 <b>کشور:</b> {user.get('country', 'نامشخص')}
+
+🔔 <b>تنظیمات اعلان‌ها:</b>
+• پیام‌های جدید: ✅ فعال
+• اطلاع‌رسانی رویدادها: ✅ فعال
+• هشدار VIP: ✅ فعال
+
+لطفاً بخش مورد نظر را انتخاب کنید:
+        """
+        
+        self.bot.send_message(uid, settings_msg, reply_markup=self.kb_settings())
+    
+    def start_change_name(self, uid):
+        """شروع تغییر نام"""
+        user = self.db.get_user(uid)
+        if not user:
+            return
+        
+        self.user_states[uid] = {
+            'state': 'changing_name'
+        }
+        
+        self.bot.send_message(uid, "📛 <b>تغییر نام</b>\n\nلطفاً نام جدید خود را وارد کنید:")
+    
+    def process_change_name(self, uid, text):
+        """پردازش تغییر نام"""
+        if len(text) < 2 or len(text) > 30:
+            self.bot.send_message(uid, "❌ نام باید بین ۲ تا ۳۰ کاراکتر باشد. لطفاً مجدد وارد کنید:")
+            return
+        
+        user = self.db.get_user(uid)
+        if user:
+            user['name'] = text
+            self.db.save_user(uid, user)
+            
+            del self.user_states[uid]
+            
+            self.bot.send_message(uid, f"✅ نام شما با موفقیت به <b>{text}</b> تغییر یافت!", reply_markup=self.kb_main(uid))
+    
+    def start_change_gender(self, uid):
+        """شروع تغییر جنسیت"""
+        self.user_states[uid] = {
+            'state': 'changing_gender'
+        }
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("👨 مرد", "👩 زن")
+        markup.add("🤖 سایر")
+        
+        self.bot.send_message(uid, "🎭 <b>تغییر جنسیت</b>\n\nلطفاً جنسیت جدید خود را انتخاب کنید:", reply_markup=markup)
+    
+    def process_change_gender(self, uid, text):
+        """پردازش تغییر جنسیت"""
+        gender_map = {
+            "👨 مرد": "مرد",
+            "👩 زن": "زن",
+            "🤖 سایر": "سایر"
+        }
+        
+        gender = gender_map.get(text)
+        if not gender:
+            self.bot.send_message(uid, "❌ لطفاً جنسیت را از گزینه‌ها انتخاب کنید.")
+            return
+        
+        user = self.db.get_user(uid)
+        if user:
+            user['gender'] = gender
+            self.db.save_user(uid, user)
+            
+            del self.user_states[uid]
+            
+            self.bot.send_message(uid, f"✅ جنسیت شما با موفقیت به <b>{gender}</b> تغییر یافت!", reply_markup=self.kb_main(uid))
+    
+    def start_change_country(self, uid):
+        """شروع تغییر کشور"""
+        self.user_states[uid] = {
+            'state': 'changing_country'
+        }
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+        countries = ["ایران", "آمریکا", "کانادا", "انگلیس", "آلمان", "ترکیه", "امارات", "هند", "چین", "روسیه", "سایر"]
+        for country in countries:
+            markup.add(country)
+        
+        self.bot.send_message(uid, "🌍 <b>تغییر کشور</b>\n\nلطفاً کشور جدید خود را انتخاب کنید:", reply_markup=markup)
+    
+    def process_change_country(self, uid, text):
+        """پردازش تغییر کشور"""
+        if len(text) < 2:
+            self.bot.send_message(uid, "❌ نام کشور نامعتبر است. لطفاً مجدد وارد کنید:")
+            return
+        
+        user = self.db.get_user(uid)
+        if user:
+            user['country'] = text
+            self.db.save_user(uid, user)
+            
+            del self.user_states[uid]
+            
+            self.bot.send_message(uid, f"✅ کشور شما با موفقیت به <b>{text}</b> تغییر یافت!", reply_markup=self.kb_main(uid))
+    
+    # ==========================================
+    # سیستم احراز هویت ادمین
+    # ==========================================
+    def request_admin_auth(self, uid):
+        """درخواست احراز هویت ادمین"""
         self.admin_states[uid] = {
-            'state': 'waiting_for_discount_vip_type',
+            'state': 'waiting_for_admin_password'
+        }
+        
+        self.bot.send_message(uid, "🔐 <b>ورود به پنل مدیریت</b>\n\nلطفاً رمز عبور ادمین را وارد کنید:")
+    
+    def process_admin_password(self, uid, text):
+        """پردازش رمز عبور ادمین"""
+        # بررسی رمز عبور
+        if text == self.admin_password or self.db.verify_admin(uid, text):
+            # ایجاد سشن ادمین
+            self.admin_manager.create_admin_session(uid)
+            del self.admin_states[uid]
+            
+            self.bot.send_message(uid, "✅ <b>احراز هویت موفق!</b>\n\nخوش آمدید به پنل مدیریت Shadow Titan.", reply_markup=self.kb_admin_main())
+        else:
+            self.bot.send_message(uid, "❌ رمز عبور اشتباه است. لطفاً مجدد تلاش کنید:")
+    
+    # ==========================================
+    # سیستم مدیریت VIP
+    # ==========================================
+    def show_vip_management(self, uid):
+        """نمایش مدیریت VIP"""
+        markup = self.kb_vip_management()
+        self.bot.send_message(uid, "🎖 <b>مدیریت VIP</b>\n\nلطفاً عمل مورد نظر را انتخاب کنید:", reply_markup=markup)
+    
+    def start_gift_vip(self, uid):
+        """شروع فرآیند هدیه VIP"""
+        self.admin_states[uid] = {
+            'state': 'waiting_for_gift_vip_user',
             'data': {}
         }
         
-        # نمایش انواع VIP برای انتخاب
-        vip_types = [
-            ("week", "۱ هفته"),
-            ("month", "۱ ماه"),
-            ("3month", "۳ ماه"),
-            ("6month", "۶ ماه"),
-            ("year", "۱ سال"),
-            ("all", "همه انواع")
-        ]
+        self.bot.send_message(uid, "🎁 <b>هدیه VIP</b>\n\nلطفاً آیدی کاربر مورد نظر را وارد کنید:")
+    
+    def process_gift_vip_user(self, uid, text):
+        """پردازش آیدی کاربر برای هدیه VIP"""
+        # بررسی وجود کاربر
+        user = self.db.get_user(text)
+        if not user:
+            self.bot.send_message(uid, "❌ کاربر یافت نشد. لطفاً آیدی صحیح وارد کنید:")
+            return
+        
+        self.admin_states[uid]['data']['user_id'] = text
+        self.admin_states[uid]['state'] = 'waiting_for_gift_vip_type'
         
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        for vip_id, vip_name in vip_types:
-            markup.add(f"{vip_name}")
+        markup.add("۱ هفته", "۱ ماه", "۳ ماه", "۶ ماه", "۱ سال", "🎅 کریسمس")
         markup.add("❌ لغو")
         
-        self.bot.send_message(uid, "🎯 <b>افزودن تخفیف جدید</b>\n\nلطفا نوع VIP مورد نظر برای تخفیف را انتخاب کنید:", reply_markup=markup)
+        self.bot.send_message(uid, f"✅ کاربر یافت شد: {user.get('name', 'نامشخص')}\n\nلطفاً نوع VIP را انتخاب کنید:", reply_markup=markup)
     
-    def process_discount_vip_type(self, uid, text):
-        """پردازش انتخاب نوع VIP برای تخفیف"""
+    def process_gift_vip_type(self, uid, text):
+        """پردازش نوع VIP برای هدیه"""
+        if text == "❌ لغو":
+            del self.admin_states[uid]
+            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
+            return
+        
         vip_type_map = {
             "۱ هفته": "week",
             "۱ ماه": "month",
             "۳ ماه": "3month",
             "۶ ماه": "6month",
             "۱ سال": "year",
-            "همه انواع": "all"
+            "🎅 کریسمس": "christmas"
         }
-        
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
         
         vip_type = vip_type_map.get(text)
         if not vip_type:
-            self.bot.send_message(uid, "❌ نوع VIP نامعتبر است. لطفا از دکمه‌ها استفاده کنید.")
+            self.bot.send_message(uid, "❌ نوع VIP نامعتبر است. لطفاً از دکمه‌ها استفاده کنید.")
             return
         
         self.admin_states[uid]['data']['vip_type'] = vip_type
-        self.admin_states[uid]['state'] = 'waiting_for_discount_percentage'
         
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ نوع VIP: {text}\n\nلطفا درصد تخفیف را وارد کنید (۱ تا ۹۹):", reply_markup=markup)
+        if vip_type == "christmas":
+            # برای کریسمس نیازی به مدت نیست
+            self.process_gift_vip_final(uid)
+        else:
+            self.admin_states[uid]['state'] = 'waiting_for_gift_vip_duration'
+            self.bot.send_message(uid, f"✅ نوع VIP: {text}\n\nلطفاً مدت زمان VIP را به روز وارد کنید (پیش‌فرض: 30 روز):")
     
-    def process_discount_percentage(self, uid, text):
-        """پردازش درصد تخفیف"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
+    def process_gift_vip_duration(self, uid, text):
+        """پردازش مدت VIP"""
         try:
-            percentage = int(text)
-            if not 1 <= percentage <= 99:
-                raise ValueError
+            if text.strip() == "":
+                duration_days = 30  # پیش‌فرض
+            else:
+                duration_days = int(text)
+                if duration_days < 1 or duration_days > 365:
+                    raise ValueError
         except:
-            self.bot.send_message(uid, "❌ درصد تخفیف نامعتبر است. لطفا عددی بین ۱ تا ۹۹ وارد کنید.")
+            self.bot.send_message(uid, "❌ مدت زمان نامعتبر است. لطفاً عددی بین ۱ تا ۳۶۵ وارد کنید.")
             return
         
-        self.admin_states[uid]['data']['percentage'] = percentage
-        self.admin_states[uid]['state'] = 'waiting_for_discount_dates'
-        
-        today = datetime.date.today()
-        tomorrow = today + datetime.timedelta(days=1)
-        next_week = today + datetime.timedelta(days=7)
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("امروز تا فردا", "امروز تا هفته آینده")
-        markup.add("❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ درصد تخفیف: {percentage}%\n\nلطفا بازه زمانی تخفیف را انتخاب کنید:\n\n• امروز تا فردا\n• امروز تا هفته آینده\n• یا تاریخ دلخواه (فرمت: شروع-پایان)", reply_markup=markup)
+        self.admin_states[uid]['data']['duration_days'] = duration_days
+        self.process_gift_vip_final(uid)
     
-    def process_discount_dates(self, uid, text):
-        """پردازش تاریخ‌های تخفیف"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        today = datetime.date.today()
-        
-        if text == "امروز تا فردا":
-            start_date = today
-            end_date = today + datetime.timedelta(days=1)
-        elif text == "امروز تا هفته آینده":
-            start_date = today
-            end_date = today + datetime.timedelta(days=7)
-        else:
-            # پردازش تاریخ دلخواه
-            try:
-                dates = text.split('-')
-                if len(dates) != 2:
-                    raise ValueError
-                
-                start_str, end_str = dates
-                start_date = datetime.datetime.strptime(start_str.strip(), '%Y/%m/%d').date()
-                end_date = datetime.datetime.strptime(end_str.strip(), '%Y/%m/%d').date()
-                
-                if start_date >= end_date:
-                    raise ValueError
-            except:
-                self.bot.send_message(uid, "❌ فرمت تاریخ نامعتبر است. لطفا از فرمت 'سال/ماه/روز-سال/ماه/روز' استفاده کنید.")
-                return
-        
-        self.admin_states[uid]['data']['start_date'] = start_date.isoformat()
-        self.admin_states[uid]['data']['end_date'] = end_date.isoformat()
-        self.admin_states[uid]['state'] = 'waiting_for_discount_reason'
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("بدون دلیل", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ بازه زمانی: {start_date} تا {end_date}\n\nلطفا دلیل تخفیف را وارد کنید (یا 'بدون دلیل' را انتخاب کنید):", reply_markup=markup)
-    
-    def process_discount_reason(self, uid, text):
-        """پردازش دلیل تخفیف"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        reason = text if text != "بدون دلیل" else ""
-        
+    def process_gift_vip_final(self, uid):
+        """پردازش نهایی هدیه VIP"""
         data = self.admin_states[uid]['data']
-        vip_type = data['vip_type']
-        percentage = data['percentage']
-        start_date = data['start_date']
-        end_date = data['end_date']
+        user_id = data['user_id']
+        vip_type = data.get('vip_type', 'month')
+        duration_days = data.get('duration_days', 30)
         
-        # اگر تخفیف برای همه انواع است
-        if vip_type == "all":
-            vip_types = ["week", "month", "3month", "6month", "year"]
-            success_count = 0
-            
-            for vt in vip_types:
-                success, message = self.discount_manager.add_discount(
-                    vt, percentage, start_date, end_date, reason, uid
-                )
-                if success:
-                    success_count += 1
-            
-            if success_count > 0:
-                self.bot.send_message(uid, f"✅ تخفیف {percentage}% با موفقیت برای {success_count} نوع VIP اضافه شد.", reply_markup=self.kb_admin_main())
-            else:
-                self.bot.send_message(uid, "❌ خطا در افزودن تخفیف‌ها.", reply_markup=self.kb_admin_main())
+        # هدیه VIP
+        if vip_type == "christmas":
+            success, message = self.vip_manager.gift_vip(user_id, vip_type, 90)  # 3 ماه رایگان
         else:
-            success, message = self.discount_manager.add_discount(
-                vip_type, percentage, start_date, end_date, reason, uid
-            )
-            
-            if success:
-                self.bot.send_message(uid, f"✅ {message}", reply_markup=self.kb_admin_main())
-            else:
-                self.bot.send_message(uid, f"❌ {message}", reply_markup=self.kb_admin_main())
+            success, message = self.vip_manager.gift_vip(user_id, vip_type, duration_days)
         
-        del self.admin_states[uid]
-    
-    def show_discount_list(self, uid):
-        """نمایش لیست تخفیف‌ها"""
-        discounts = self.discount_manager.get_all_discounts()
-        
-        if not discounts:
-            self.bot.send_message(uid, "📭 هیچ تخفیف فعالی وجود ندارد.")
-            return
-        
-        message = "💰 <b>لیست تخفیف‌های فعال</b>\n\n"
-        
-        for i, discount in enumerate(discounts, 1):
-            vip_type = discount['vip_type']
-            percentage = discount['discount_percentage']
-            start_date = datetime.datetime.fromisoformat(discount['start_date'].replace('Z', '+00:00')).strftime('%Y/%m/%d')
-            end_date = datetime.datetime.fromisoformat(discount['end_date'].replace('Z', '+00:00')).strftime('%Y/%m/%d')
-            reason = discount['reason'] or "بدون دلیل"
-            
-            message += f"<b>{i}. {self.vip_manager.vip_names.get(vip_type, vip_type)}</b>\n"
-            message += f"   📊 تخفیف: {percentage}%\n"
-            message += f"   ⏰ از: {start_date} تا {end_date}\n"
-            message += f"   📝 دلیل: {reason}\n"
-            message += f"   🆔 کد: <code>{discount['id']}</code>\n\n"
-        
-        self.bot.send_message(uid, message)
-    
-    def show_discount_stats(self, uid):
-        """نمایش آمار تخفیف‌ها"""
-        stats = self.discount_manager.get_discount_stats()
-        
-        message = "📊 <b>آمار تخفیف‌ها</b>\n\n"
-        message += f"📈 تعداد کل تخفیف‌ها: {stats['total']}\n"
-        message += f"✅ تخفیف‌های فعال: {stats['active']}\n"
-        message += f"❌ تخفیف‌های منقضی: {stats['expired']}\n\n"
-        
-        if stats['by_type']:
-            message += "<b>توزیع بر اساس نوع VIP:</b>\n"
-            for vip_type, count in stats['by_type'].items():
+        if success:
+            # اطلاع به کاربر
+            try:
+                user = self.db.get_user(user_id)
                 vip_name = self.vip_manager.vip_names.get(vip_type, vip_type)
-                message += f"• {vip_name}: {count} تخفیف\n"
-        
-        self.bot.send_message(uid, message)
-    
-    # ==========================================
-    # سیستم مدیریت رویدادها
-    # ==========================================
-    def show_event_management(self, uid):
-        """نمایش مدیریت رویدادها"""
-        markup = self.kb_event_management()
-        self.bot.send_message(uid, "🎪 <b>مدیریت رویدادها</b>\n\nلطفا عمل مورد نظر را انتخاب کنید:", reply_markup=markup)
-    
-    def start_create_event(self, uid):
-        """شروع فرآیند ایجاد رویداد"""
-        self.admin_states[uid] = {
-            'state': 'waiting_for_event_name',
-            'data': {}
-        }
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("❌ لغو")
-        
-        self.bot.send_message(uid, "🎪 <b>ایجاد رویداد جدید</b>\n\nلطفا نام رویداد را وارد کنید:", reply_markup=markup)
-    
-    def process_event_name(self, uid, text):
-        """پردازش نام رویداد"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        self.admin_states[uid]['data']['name'] = text
-        self.admin_states[uid]['state'] = 'waiting_for_event_description'
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("بدون توضیح", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ نام رویداد: {text}\n\nلطفا توضیح رویداد را وارد کنید (یا 'بدون توضیح' را انتخاب کنید):", reply_markup=markup)
-    
-    def process_event_description(self, uid, text):
-        """پردازش توضیح رویداد"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        description = text if text != "بدون توضیح" else ""
-        
-        self.admin_states[uid]['data']['description'] = description
-        self.admin_states[uid]['state'] = 'waiting_for_event_dates'
-        
-        today = datetime.date.today()
-        tomorrow = today + datetime.timedelta(days=1)
-        next_week = today + datetime.timedelta(days=7)
-        next_month = today + datetime.timedelta(days=30)
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("امروز تا فردا", "امروز تا هفته آینده")
-        markup.add("امروز تا ماه آینده", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ توضیح رویداد: {description or 'بدون توضیح'}\n\nلطفا بازه زمانی رویداد را انتخاب کنید:\n\n• امروز تا فردا\n• امروز تا هفته آینده\n• امروز تا ماه آینده\n• یا تاریخ دلخواه (فرمت: شروع-پایان)", reply_markup=markup)
-    
-    def process_event_dates(self, uid, text):
-        """پردازش تاریخ‌های رویداد"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        today = datetime.date.today()
-        
-        if text == "امروز تا فردا":
-            start_date = today
-            end_date = today + datetime.timedelta(days=1)
-        elif text == "امروز تا هفته آینده":
-            start_date = today
-            end_date = today + datetime.timedelta(days=7)
-        elif text == "امروز تا ماه آینده":
-            start_date = today
-            end_date = today + datetime.timedelta(days=30)
-        else:
-            # پردازش تاریخ دلخواه
-            try:
-                dates = text.split('-')
-                if len(dates) != 2:
-                    raise ValueError
-                
-                start_str, end_str = dates
-                start_date = datetime.datetime.strptime(start_str.strip(), '%Y/%m/%d').date()
-                end_date = datetime.datetime.strptime(end_str.strip(), '%Y/%m/%d').date()
-                
-                if start_date >= end_date:
-                    raise ValueError
+                self.bot.send_message(user_id, f"""
+🎁 <b>هدیه VIP ویژه!</b>
+
+تبریک! یک هدیه VIP دریافت کردید.
+
+🎖 <b>نوع VIP:</b> {vip_name}
+⏰ <b>مدت:</b> {duration_days if vip_type != 'christmas' else 90} روز
+✨ <b>از طرف مدیریت ربات</b>
+
+اکنون می‌توانید از تمامی امکانات VIP استفاده کنید!
+                """)
             except:
-                self.bot.send_message(uid, "❌ فرمت تاریخ نامعتبر است. لطفا از فرمت 'سال/ماه/روز-سال/ماه/روز' استفاده کنید.")
-                return
-        
-        self.admin_states[uid]['data']['start_date'] = start_date.isoformat()
-        self.admin_states[uid]['data']['end_date'] = end_date.isoformat()
-        self.admin_states[uid]['state'] = 'waiting_for_event_vip_plans'
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("بدون پلن ویژه", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ بازه زمانی: {start_date} تا {end_date}\n\nلطفا پلن‌های VIP ویژه رویداد را به صورت JSON وارد کنید (یا 'بدون پلن ویژه' را انتخاب کنید):\n\nمثال:\n" + json.dumps([
-            {
-                "type": "month",
-                "name": "VIP ویژه رویداد",
-                "special_price": 800,
-                "original_price": 1000,
-                "description": "پلن ویژه برای شرکت‌کنندگان رویداد",
-                "features": ["ویژگی ۱", "ویژگی ۲"]
-            }
-        ], ensure_ascii=False, indent=2), reply_markup=markup)
-    
-    def process_event_vip_plans(self, uid, text):
-        """پردازش پلن‌های VIP ویژه رویداد"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        data = self.admin_states[uid]['data']
-        
-        if text == "بدون پلن ویژه":
-            vip_plans = []
-        else:
-            try:
-                vip_plans = json.loads(text)
-                if not isinstance(vip_plans, list):
-                    raise ValueError
-            except:
-                self.bot.send_message(uid, "❌ فرمت JSON نامعتبر است. لطفا مجدداً تلاش کنید.")
-                return
-        
-        # ایجاد رویداد
-        success = self.event_manager.create_event(
-            data['name'],
-            data['description'],
-            data['start_date'],
-            data['end_date'],
-            vip_plans,
-            uid
-        )
-        
-        if success:
-            self.bot.send_message(uid, f"✅ رویداد '{data['name']}' با موفقیت ایجاد شد.", reply_markup=self.kb_admin_main())
-        else:
-            self.bot.send_message(uid, "❌ خطا در ایجاد رویداد.", reply_markup=self.kb_admin_main())
-        
-        del self.admin_states[uid]
-    
-    def show_active_events_admin(self, uid):
-        """نمایش رویدادهای فعال برای ادمین"""
-        events = self.event_manager.get_active_events()
-        
-        if not events:
-            self.bot.send_message(uid, "📭 هیچ رویداد فعالی وجود ندارد.")
-            return
-        
-        message = "🎪 <b>رویدادهای فعال</b>\n\n"
-        
-        for i, event in enumerate(events, 1):
-            start_date = datetime.datetime.fromisoformat(event['start_date'].replace('Z', '+00:00')).strftime('%Y/%m/%d')
-            end_date = datetime.datetime.fromisoformat(event['end_date'].replace('Z', '+00:00')).strftime('%Y/%m/%d')
+                pass
             
-            message += f"<b>{i}. {event['event_name']}</b>\n"
-            message += f"   📝 {event['description'] or 'بدون توضیح'}\n"
-            message += f"   ⏰ از: {start_date} تا {end_date}\n"
-            message += f"   🎁 پلن‌های ویژه: {len(event['vip_plans'])}\n"
-            message += f"   🆔 کد: <code>{event['id']}</code>\n\n"
-        
-        self.bot.send_message(uid, message)
-    
-    # ==========================================
-    # سیستم مدیریت تعمیر
-    # ==========================================
-    def show_maintenance_management(self, uid):
-        """نمایش مدیریت تعمیر"""
-        markup = self.kb_maintenance_management()
-        self.bot.send_message(uid, "🔧 <b>مدیریت تعمیر و نگهداری</b>\n\nلطفا عمل مورد نظر را انتخاب کنید:", reply_markup=markup)
-    
-    def start_set_maintenance(self, uid):
-        """شروع فرآیند تنظیم حالت تعمیر"""
-        self.admin_states[uid] = {
-            'state': 'waiting_for_maintenance_mode',
-            'data': {}
-        }
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("0 - غیرفعال", "1 - فقط غیر-VIP مسدود")
-        markup.add("2 - همه مسدود", "❌ لغو")
-        
-        self.bot.send_message(uid, "🔧 <b>تنظیم حالت تعمیر</b>\n\nلطفا حالت تعمیر را انتخاب کنید:\n\n• 0 - غیرفعال\n• 1 - فعال (فقط کاربران غیر-VIP مسدود)\n• 2 - فعال (همه کاربران مسدود)", reply_markup=markup)
-    
-    def process_maintenance_mode(self, uid, text):
-        """پردازش حالت تعمیر"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        mode_map = {
-            "0 - غیرفعال": 0,
-            "1 - فقط غیر-VIP مسدود": 1,
-            "2 - همه مسدود": 2
-        }
-        
-        mode = mode_map.get(text)
-        if mode is None:
-            self.bot.send_message(uid, "❌ حالت نامعتبر است. لطفا از دکمه‌ها استفاده کنید.")
-            return
-        
-        self.admin_states[uid]['data']['mode'] = mode
-        self.admin_states[uid]['state'] = 'waiting_for_maintenance_vip_access'
-        
-        if mode == 0:
-            # اگر غیرفعال است، نیازی به ادامه نیست
-            success, message = self.maintenance_manager.set_maintenance_mode(
-                mode, 1, "", None, None, uid
-            )
-            
-            if success:
-                self.bot.send_message(uid, message, reply_markup=self.kb_admin_main())
-            else:
-                self.bot.send_message(uid, f"❌ {message}", reply_markup=self.kb_admin_main())
-            
-            del self.admin_states[uid]
-            return
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("✅ بله - VIP دسترسی دارند", "❌ خیر - VIP هم مسدود هستند")
-        markup.add("❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ حالت تعمیر: {'غیرفعال' if mode == 0 else 'فعال'}\n\nآیا کاربران VIP در حین تعمیر دسترسی داشته باشند؟", reply_markup=markup)
-    
-    def process_maintenance_vip_access(self, uid, text):
-        """پردازش دسترسی VIP"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        vip_access = 1 if text == "✅ بله - VIP دسترسی دارند" else 0
-        
-        self.admin_states[uid]['data']['vip_access'] = vip_access
-        self.admin_states[uid]['state'] = 'waiting_for_maintenance_reason'
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("بدون دلیل", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ دسترسی VIP: {'✅ دارند' if vip_access == 1 else '❌ ندارند'}\n\nلطفا دلیل تعمیر را وارد کنید (یا 'بدون دلیل' را انتخاب کنید):", reply_markup=markup)
-    
-    def process_maintenance_reason(self, uid, text):
-        """پردازش دلیل تعمیر"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        reason = text if text != "بدون دلیل" else ""
-        
-        self.admin_states[uid]['data']['reason'] = reason
-        self.admin_states[uid]['state'] = 'waiting_for_maintenance_dates'
-        
-        today = datetime.datetime.now()
-        tomorrow = today + datetime.timedelta(hours=24)
-        next_hour = today + datetime.timedelta(hours=1)
-        
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("۱ ساعت", "۲۴ ساعت")
-        markup.add("بدون محدودیت زمانی", "❌ لغو")
-        
-        self.bot.send_message(uid, f"✅ دلیل تعمیر: {reason or 'بدون دلیل'}\n\nلطفا مدت زمان تعمیر را انتخاب کنید:", reply_markup=markup)
-    
-    def process_maintenance_dates(self, uid, text):
-        """پردازش مدت زمان تعمیر"""
-        if text == "❌ لغو":
-            del self.admin_states[uid]
-            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
-            return
-        
-        now = datetime.datetime.now()
-        
-        if text == "بدون محدودیت زمانی":
-            start_time = None
-            end_time = None
-        elif text == "۱ ساعت":
-            start_time = now
-            end_time = now + datetime.timedelta(hours=1)
-        elif text == "۲۴ ساعت":
-            start_time = now
-            end_time = now + datetime.timedelta(hours=24)
-        else:
-            self.bot.send_message(uid, "❌ گزینه نامعتبر است.")
-            return
-        
-        data = self.admin_states[uid]['data']
-        
-        success, message = self.maintenance_manager.set_maintenance_mode(
-            data['mode'],
-            data['vip_access'],
-            data['reason'],
-            start_time.isoformat() if start_time else None,
-            end_time.isoformat() if end_time else None,
-            uid
-        )
-        
-        if success:
-            self.bot.send_message(uid, message, reply_markup=self.kb_admin_main())
+            self.bot.send_message(uid, f"✅ {message}", reply_markup=self.kb_admin_main())
         else:
             self.bot.send_message(uid, f"❌ {message}", reply_markup=self.kb_admin_main())
         
         del self.admin_states[uid]
     
-    def show_maintenance_status(self, uid):
-        """نمایش وضعیت تعمیر"""
-        info_text, settings = self.maintenance_manager.get_maintenance_info()
-        self.bot.send_message(uid, info_text)
+    def start_remove_vip(self, uid):
+        """شروع فرآیند حذف VIP"""
+        self.admin_states[uid] = {
+            'state': 'waiting_for_remove_vip_user'
+        }
+        
+        self.bot.send_message(uid, "🗑 <b>حذف VIP</b>\n\nلطفاً آیدی کاربر مورد نظر را وارد کنید:")
     
-    def disable_maintenance_mode(self, uid):
-        """غیرفعال کردن حالت تعمیر"""
-        success, message = self.maintenance_manager.disable_maintenance()
+    def process_remove_vip_user(self, uid, text):
+        """پردازش حذف VIP"""
+        # بررسی وجود کاربر
+        user = self.db.get_user(text)
+        if not user:
+            self.bot.send_message(uid, "❌ کاربر یافت نشد. لطفاً آیدی صحیح وارد کنید:")
+            return
+        
+        # حذف VIP
+        success, message = self.vip_manager.remove_vip(text)
         
         if success:
-            self.bot.send_message(uid, message, reply_markup=self.kb_admin_main())
+            # اطلاع به کاربر
+            try:
+                self.bot.send_message(text, """
+🔚 <b>VIP شما حذف شد</b>
+
+متأسفانه VIP حساب شما توسط مدیریت حذف شده است.
+
+در صورت نیاز به اطلاعات بیشتر با پشتیبانی تماس بگیرید.
+                """)
+            except:
+                pass
+            
+            self.bot.send_message(uid, f"✅ {message}", reply_markup=self.kb_admin_main())
         else:
             self.bot.send_message(uid, f"❌ {message}", reply_markup=self.kb_admin_main())
+        
+        del self.admin_states[uid]
     
     # ==========================================
-    # نمایش پلن‌های VIP با تخفیف‌ها
+    # سیستم ارسال همگانی
+    # ==========================================
+    def show_broadcast_management(self, uid):
+        """نمایش مدیریت ارسال همگانی"""
+        markup = self.kb_broadcast_management()
+        self.bot.send_message(uid, "📣 <b>ارسال همگانی</b>\n\nلطفاً نوع ارسال را انتخاب کنید:", reply_markup=markup)
+    
+    def start_broadcast_all(self, uid):
+        """شروع ارسال به همه"""
+        self.admin_states[uid] = {
+            'state': 'waiting_for_broadcast_message',
+            'data': {'type': 'all'}
+        }
+        
+        self.bot.send_message(uid, "📢 <b>ارسال پیام به همه کاربران</b>\n\nلطفاً پیام خود را وارد کنید:")
+    
+    def start_broadcast_vip(self, uid):
+        """شروع ارسال به VIP ها"""
+        self.admin_states[uid] = {
+            'state': 'waiting_for_broadcast_message',
+            'data': {'type': 'vip'}
+        }
+        
+        self.bot.send_message(uid, "👑 <b>ارسال پیام به کاربران VIP</b>\n\nلطفاً پیام خود را وارد کنید:")
+    
+    def process_broadcast_message(self, uid, text):
+        """پردازش پیام همگانی"""
+        data = self.admin_states[uid]['data']
+        broadcast_type = data['type']
+        
+        if text == "❌ لغو":
+            del self.admin_states[uid]
+            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
+            return
+        
+        # تأیید ارسال
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ بله، ارسال کن", callback_data=f"confirm_broadcast_{broadcast_type}"),
+            types.InlineKeyboardButton("❌ خیر، لغو کن", callback_data="cancel_broadcast")
+        )
+        
+        self.admin_states[uid]['data']['message'] = text
+        
+        self.bot.send_message(uid, f"""
+📤 <b>تأیید ارسال همگانی</b>
+
+📝 <b>پیام:</b>
+{text}
+
+👥 <b>گیرندگان:</b> {{
+    'all': 'همه کاربران',
+    'vip': 'کاربران VIP'
+}}.get(broadcast_type, 'نامشخص')
+
+⚠️ <b>توجه:</b> این عمل قابل بازگشت نیست!
+
+آیا مطمئن هستید؟
+        """, reply_markup=markup)
+    
+    # ==========================================
+    # سیستم مدیریت ادمین‌ها
+    # ==========================================
+    def show_admin_management(self, uid):
+        """نمایش مدیریت ادمین‌ها"""
+        markup = self.kb_admin_management()
+        self.bot.send_message(uid, "🔐 <b>مدیریت ادمین‌ها</b>\n\nلطفاً عمل مورد نظر را انتخاب کنید:", reply_markup=markup)
+    
+    def start_add_admin(self, uid):
+        """شروع افزودن ادمین"""
+        self.admin_states[uid] = {
+            'state': 'waiting_for_admin_username',
+            'data': {}
+        }
+        
+        self.bot.send_message(uid, "➕ <b>افزودن ادمین جدید</b>\n\nلطفاً آیدی کاربر مورد نظر را وارد کنید:")
+    
+    def process_admin_username(self, uid, text):
+        """پردازش آیدی ادمین"""
+        # بررسی وجود کاربر
+        user = self.db.get_user(text)
+        if not user:
+            self.bot.send_message(uid, "❌ کاربر یافت نشد. لطفاً آیدی صحیح وارد کنید:")
+            return
+        
+        self.admin_states[uid]['data']['new_admin_id'] = text
+        self.admin_states[uid]['state'] = 'waiting_for_admin_password_new'
+        
+        self.bot.send_message(uid, f"✅ کاربر یافت شد: {user.get('name', 'نامشخص')}\n\nلطفاً رمز عبور جدید ادمین را وارد کنید:")
+    
+    def process_admin_password_new(self, uid, text):
+        """پردازش رمز عبور جدید ادمین"""
+        if len(text) < 6:
+            self.bot.send_message(uid, "❌ رمز عبور باید حداقل ۶ کاراکتر باشد. لطفاً مجدد وارد کنید:")
+            return
+        
+        self.admin_states[uid]['data']['password'] = text
+        self.admin_states[uid]['state'] = 'waiting_for_admin_permissions'
+        
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+        markup.add("👤 کاربری", "🛡️ امنیتی", "💰 مالی", "🎖 VIP", "👑 ابرادمین")
+        markup.add("❌ لغو")
+        
+        self.bot.send_message(uid, "✅ رمز عبور ثبت شد.\n\nلطفاً سطح دسترسی ادمین را انتخاب کنید:", reply_markup=markup)
+    
+    def process_admin_permissions(self, uid, text):
+        """پردازش سطح دسترسی ادمین"""
+        if text == "❌ لغو":
+            del self.admin_states[uid]
+            self.bot.send_message(uid, "❌ فرآیند لغو شد.", reply_markup=self.kb_admin_main())
+            return
+        
+        permission_map = {
+            "👤 کاربری": "user_management",
+            "🛡️ امنیتی": "security",
+            "💰 مالی": "financial",
+            "🎖 VIP": "vip_management",
+            "👑 ابرادمین": "super_admin"
+        }
+        
+        permissions = permission_map.get(text, "user_management")
+        data = self.admin_states[uid]['data']
+        
+        # افزودن ادمین
+        success = self.db.add_admin(data['new_admin_id'], data['password'], permissions)
+        
+        if success:
+            self.bot.send_message(uid, f"✅ ادمین جدید با موفقیت اضافه شد!\n\n👤 آیدی: {data['new_admin_id']}\n🔑 دسترسی: {text}", reply_markup=self.kb_admin_main())
+        else:
+            self.bot.send_message(uid, "❌ خطا در افزودن ادمین.", reply_markup=self.kb_admin_main())
+        
+        del self.admin_states[uid]
+    
+    # ==========================================
+    # سیستم نمایش پروفایل
+    # ==========================================
+    def show_profile(self, uid, user):
+        """نمایش پروفایل"""
+        is_vip = user.get('vip_end', 0) > time.time()
+        vip_end = user.get('vip_end', 0)
+        
+        if is_vip:
+            days_left = int((vip_end - time.time()) / (24 * 3600))
+            vip_status = f"🎖 VIP ({days_left} روز باقی مانده)"
+        else:
+            vip_status = "⭐ معمولی"
+        
+        message = f"""
+👤 <b>پروفایل شما</b>
+
+📛 نام: {user.get('name', 'نامشخص')}
+📅 سن: {user.get('age', 'نامشخص')}
+🎭 جنسیت: {user.get('gender', 'نامشخص')}
+🌍 کشور: {user.get('country', 'نامشخص')}
+🎭 وضعیت: {vip_status}
+💰 سکه: {user.get('coins', 0):,}
+👥 دعوت‌ها: {user.get('total_referrals', 0)}
+⚠️ اخطارها: {user.get('warns', 0)}/3
+
+📅 تاریخ عضویت: {datetime.datetime.fromtimestamp(user.get('created_at', time.time())).strftime('%Y-%m-%d')}
+        """
+        
+        self.bot.send_message(uid, message)
+    
+    # ==========================================
+    # سیستم نمایش VIP
     # ==========================================
     def show_vip_plans(self, uid):
-        """نمایش پلن‌های VIP با تخفیف‌ها"""
+        """نمایش پلن‌های VIP"""
         user = self.db.get_user(uid)
         coins = user.get('coins', 0) if user else 0
+        is_vip = user and user.get('vip_end', 0) > time.time()
         
-        # دریافت پلن‌های عادی با تخفیف
-        normal_plans = self.vip_manager.get_vip_plans_with_discounts()
+        # دریافت پلن‌های VIP
+        plans = self.vip_manager.get_vip_plans_with_discounts()
         
         # دریافت پلن‌های ویژه رویدادها
         event_plans = []
@@ -2223,40 +2651,53 @@ class ShadowTitanBotEnhanced:
                 plan['event_name'] = event['event_name']
                 event_plans.append(plan)
         
+        # پیام اصلی
         message = f"""
 🎖 <b>فروشگاه VIP</b>
 
 💰 <b>موجودی شما:</b> {coins:,} سکه
+{'🎖 <b>شما در حال حاضر VIP هستید!</b>' if is_vip else '⭐ <b>برای دسترسی به امکانات ویژه VIP خریداری کنید.</b>'}
 
 <b>طرح‌های VIP:</b>
-        """
+"""
         
         kb = types.InlineKeyboardMarkup(row_width=1)
         
         # نمایش پلن‌های عادی
-        for plan in normal_plans:
-            status = "✅" if coins >= plan['final_price'] else "🔒"
-            
-            if plan['has_discount']:
-                button_text = f"🎁 {plan['name']} - {plan['final_price']:,} سکه (تخفیف {plan['discount']}%)"
-            else:
-                button_text = f"{status} {plan['name']} - {plan['final_price']:,} سکه"
-            
-            callback_data = f"buy_vip_{plan['type']}"
-            
-            if coins >= plan['final_price']:
+        for plan in plans:
+            if plan.get('is_free'):
+                button_text = f"🎅 {plan['name']} - رایگان!"
+                callback_data = f"buy_vip_{plan['type']}"
                 kb.add(types.InlineKeyboardButton(button_text, callback_data=callback_data))
-            else:
-                kb.add(types.InlineKeyboardButton(button_text, callback_data="insufficient_coins"))
+                
+                message += f"\n\n<b>{plan['name']}:</b>"
+                for feature in plan['features'][:5]:
+                    message += f"\n{feature}"
+                message += f"\n💰 قیمت: <b>رایگان!</b>"
             
-            message += f"\n\n<b>{plan['name']}:</b>"
-            for feature in plan['features'][:3]:  # فقط ۳ ویژگی اول
-                message += f"\n{feature}"
-            
-            if plan['has_discount']:
-                message += f"\n💰 قیمت اصلی: <s>{plan['original_price']:,}</s> ← {plan['final_price']:,} سکه"
-            else:
-                message += f"\n💰 قیمت: {plan['final_price']:,} سکه"
+            elif not plan.get('is_free'):
+                status = "✅" if coins >= plan['final_price'] else "🔒"
+                
+                if plan['has_discount']:
+                    button_text = f"🎁 {plan['name']} - {plan['final_price']:,} سکه (تخفیف {plan['discount']}%)"
+                else:
+                    button_text = f"{status} {plan['name']} - {plan['final_price']:,} سکه"
+                
+                callback_data = f"buy_vip_{plan['type']}"
+                
+                if coins >= plan['final_price'] or is_vip:
+                    kb.add(types.InlineKeyboardButton(button_text, callback_data=callback_data))
+                else:
+                    kb.add(types.InlineKeyboardButton(button_text, callback_data="insufficient_coins"))
+                
+                message += f"\n\n<b>{plan['name']}:</b>"
+                for feature in plan['features'][:3]:
+                    message += f"\n{feature}"
+                
+                if plan['has_discount']:
+                    message += f"\n💰 قیمت اصلی: <s>{plan['original_price']:,}</s> ← {plan['final_price']:,} سکه"
+                else:
+                    message += f"\n💰 قیمت: {plan['final_price']:,} سکه"
         
         # نمایش پلن‌های ویژه رویدادها
         if event_plans:
@@ -2279,102 +2720,8 @@ class ShadowTitanBotEnhanced:
         self.bot.send_message(uid, message, reply_markup=kb)
     
     # ==========================================
-    # سایر متدها
+    # سیستم رویدادها
     # ==========================================
-    def show_admin_panel(self, uid):
-        """نمایش پنل مدیریت"""
-        self.bot.send_message(uid, "🛡️ <b>پنل مدیریت پیشرفته</b>\n\nلطفا بخش مورد نظر را انتخاب کنید:", reply_markup=self.kb_admin_main())
-    
-    def handle_inappropriate_content(self, uid, analysis):
-        """مدیریت محتوای نامناسب"""
-        user = self.db.get_user(uid)
-        if user:
-            user['warns'] = user.get('warns', 0) + 1
-            self.db.save_user(uid, user)
-            
-            if user['warns'] >= 3:
-                self.ban_user(uid, "ارسال محتوای نامناسب مکرر")
-            else:
-                self.bot.send_message(uid, f"⚠️ <b>اخطار {user['warns']}/3</b>\n\nمحتوای نامناسب ممنوع است!")
-    
-    def ban_user(self, uid, reason):
-        """بن کردن کاربر"""
-        user = self.db.get_user(uid)
-        if user:
-            user['is_banned'] = 1
-            user['ban_reason'] = reason
-            self.db.save_user(uid, user)
-            
-            self.bot.send_message(uid, f"🚫 حساب شما بن شد!\nدلیل: {reason}\nپشتیبانی: {self.support}")
-            
-            logger.warning(f"User {uid} banned. Reason: {reason}")
-    
-    def register_new_user(self, uid, msg):
-        """ثبت‌نام کاربر جدید"""
-        self.bot.send_message(uid, "🌟 <b>به Shadow Titan خوش آمدید!</b>\n\nلطفاً نام مستعار خود را وارد کنید:")
-        
-        user_data = {
-            'name': '',
-            'state': 'waiting_for_name',
-            'vip_end': 0,
-            'coins': 50,  # سکه هدیه ثبت‌نام
-            'total_referrals': 0,
-            'warns': 0,
-            'created_at': time.time(),
-            'is_banned': 0,
-            'ban_reason': ''
-        }
-        self.db.save_user(uid, user_data)
-    
-    def welcome_back_user(self, uid, user):
-        """خوش‌آمدگویی به کاربر بازگشته"""
-        is_vip = user.get('vip_end', 0) > time.time()
-        vip_status = "🎖 VIP" if is_vip else "⭐ عادی"
-        
-        # بررسی رویدادهای فعال
-        active_events = self.event_manager.get_active_events()
-        event_text = ""
-        if active_events:
-            event_text = "\n\n🎪 <b>رویدادهای فعال:</b>\n"
-            for event in active_events:
-                event_text += f"• {event['event_name']}\n"
-        
-        welcome_message = f"""
-🔄 <b>خوش برگشتید {user.get('name', 'عزیز')}!</b>
-
-🔸 وضعیت: {vip_status}
-💰 سکه: {user.get('coins', 0):,}
-👥 دعوت‌ها: {user.get('total_referrals', 0)}
-{event_text}
-        """
-        
-        self.bot.send_message(uid, welcome_message, reply_markup=self.kb_main(uid))
-    
-    def show_profile(self, uid, user):
-        """نمایش پروفایل"""
-        is_vip = user.get('vip_end', 0) > time.time()
-        vip_end = user.get('vip_end', 0)
-        
-        if is_vip:
-            days_left = int((vip_end - time.time()) / (24 * 3600))
-            vip_status = f"🎖 VIP ({days_left} روز باقی مانده)"
-        else:
-            vip_status = "⭐ معمولی"
-        
-        message = f"""
-👤 <b>پروفایل شما</b>
-
-📛 نام: {user.get('name', 'نامشخص')}
-🎭 وضعیت: {vip_status}
-💰 سکه: {user.get('coins', 0):,}
-👥 دعوت‌ها: {user.get('total_referrals', 0)}
-⚠️ اخطارها: {user.get('warns', 0)}/3
-
-📅 تاریخ عضویت: {datetime.datetime.fromtimestamp(user.get('created_at', time.time())).strftime('%Y-%m-%d')}
-        """
-        
-        self.bot.send_message(uid, message)
-    
     def show_events(self, uid):
         """نمایش رویدادهای ویژه"""
         active_events = self.event_manager.get_active_events()
@@ -2409,65 +2756,9 @@ class ShadowTitanBotEnhanced:
         
         self.bot.send_message(uid, message)
     
-    def show_vip_features(self, uid):
-        """نمایش ویژگی‌های VIP"""
-        user = self.db.get_user(uid)
-        is_vip = user and user.get('vip_end', 0) > time.time()
-        
-        if is_vip:
-            message = """
-⭐ <b>ویژگی‌های VIP شما:</b>
-
-<b>ویژگی‌های اصلی:</b>
-✅ چت ناشناس نامحدود
-✅ ارسال پیام ناشناس
-✅ شرکت در گردونه شانس روزانه
-✅ دسترسی به پروفایل پیشرفته
-
-<b>ویژگی‌های ویژه:</b>
-🎁 100 سکه هدیه ماهانه
-🚀 اولویت در جستجوی چت
-🎯 ماموریت‌های ویژه
-📊 آمار پیشرفته پروفایل
-
-<b>ویژگی‌های انحصاری:</b>
-⭐ نماد VIP طلایی در کنار نام
-⚡ سرعت چت 2 برابری
-👑 دسترسی به چت خصوصی ادمین
-📈 مشاهده آمار زنده ربات
-            """
-        else:
-            message = """
-🔓 <b>ویژگی‌های VIP</b>
-
-با خرید VIP به ویژگی‌های فوق‌العاده‌ای دسترسی پیدا می‌کنید:
-
-<b>ویژگی‌های اصلی (همه VIP ها):</b>
-✅ چت ناشناس نامحدود
-✅ ارسال پیام ناشناس
-✅ شرکت در گردونه شانس روزانه
-✅ دسترسی به پروفایل پیشرفته
-
-<b>ویژگی‌های ویژه (VIP 3 ماه و بیشتر):</b>
-🎁 100 سکه هدیه ماهانه
-🚀 اولویت در جستجوی چت
-🎯 ماموریت‌های ویژه
-📊 آمار پیشرفته پروفایل
-🔔 نوتیفیکیشن اختصاصی
-
-<b>ویژگی‌های انحصاری (VIP 6 ماه و بیشتر):</b>
-⭐ نماد VIP طلایی در کنار نام
-⚡ سرعت چت 2 برابری
-👑 دسترسی به چت خصوصی ادمین
-📈 مشاهده آمار زنده ربات
-🎪 ورود رایگان به همه رویدادها
-🛡️ پشتیبانی VIP 24/7
-
-برای مشاهده طرح‌های VIP روی «🎖 خرید VIP» کلیک کنید.
-            """
-        
-        self.bot.send_message(uid, message)
-    
+    # ==========================================
+    # سیستم کمک
+    # ==========================================
     def show_help(self, uid):
         """نمایش راهنما"""
         message = """
@@ -2483,18 +2774,41 @@ class ShadowTitanBotEnhanced:
 • 👥 رفرال و دعوت - دعوت دوستان و دریافت پاداش
 • 🎖 خرید VIP - مشاهده و خرید طرح‌های VIP
 • 🎪 رویدادهای ویژه - شرکت در رویدادهای ویژه
+• ⚙ تنظیمات - تغییر اطلاعات حساب کاربری
 
 <b>ویژگی‌های VIP:</b>
 • چت ناشناس نامحدود
 • ارسال پیام ناشناس
 • سکه هدیه ماهانه
 • اولویت در جستجوی چت
-• و ده‌ها ویژگی دیگر...
+• ماموریت‌های ویژه
+• آمار پیشرفته پروفایل
+• نوتیفیکیشن اختصاصی
+• انتخاب رنگ نام در چت
+• نماد VIP طلایی در کنار نام
+• سرعت چت 2 برابری
+• دسترسی به چت خصوصی ادمین
+• مشاهده آمار زنده ربات
+• ورود رایگان به همه رویدادها
+• پشتیبانی VIP 24/7
+• قفل‌شکنی همه محدودیت‌ها
 
 <b>پشتیبانی:</b>
 اگر سوالی دارید به @its_alimo پیام دهید.
         """
         self.bot.send_message(uid, message)
+    
+    # ==========================================
+    # سیستم پنل مدیریت
+    # ==========================================
+    def show_admin_panel(self, uid):
+        """نمایش پنل مدیریت"""
+        self.bot.send_message(uid, "🛡️ <b>پنل مدیریت پیشرفته</b>\n\nلطفاً بخش مورد نظر را انتخاب کنید:", reply_markup=self.kb_admin_main())
+    
+    def show_system_settings(self, uid):
+        """نمایش تنظیمات سیستمی"""
+        markup = self.kb_system_settings()
+        self.bot.send_message(uid, "⚙ <b>تنظیمات سیستمی</b>\n\nلطفاً بخش مورد نظر را انتخاب کنید:", reply_markup=markup)
     
     # ==========================================
     # کال‌بک‌ها
@@ -2526,6 +2840,31 @@ class ShadowTitanBotEnhanced:
         elif call.data == "admin_maintenance_status":
             self.show_maintenance_status(uid)
         
+        elif call.data == "admin_gift_vip":
+            self.start_gift_vip(uid)
+        
+        elif call.data == "admin_remove_vip":
+            self.start_remove_vip(uid)
+        
+        elif call.data == "admin_christmas_vip":
+            self.start_gift_vip(uid)  # برای کریسمس
+        
+        elif call.data == "admin_broadcast_all":
+            self.start_broadcast_all(uid)
+        
+        elif call.data == "admin_broadcast_vip_only":
+            self.start_broadcast_vip(uid)
+        
+        elif call.data.startswith("confirm_broadcast_"):
+            self.process_broadcast_confirmation(uid, call.data)
+        
+        elif call.data == "cancel_broadcast":
+            del self.admin_states[uid]
+            self.bot.send_message(uid, "❌ ارسال همگانی لغو شد.", reply_markup=self.kb_admin_main())
+        
+        elif call.data == "admin_add_admin":
+            self.start_add_admin(uid)
+        
         elif call.data.startswith("buy_vip_"):
             vip_type = call.data[8:]
             self.handle_vip_purchase(uid, vip_type)
@@ -2533,7 +2872,40 @@ class ShadowTitanBotEnhanced:
         elif call.data == "insufficient_coins":
             self.bot.send_message(uid, "❌ سکه کافی ندارید! برای دریافت سکه می‌توانید:\n1. دوستان خود را دعوت کنید\n2. ماموریت‌های روزانه را انجام دهید\n3. در گردونه شانس شرکت کنید")
         
+        elif call.data.startswith("admin_"):
+            self.bot.send_message(uid, f"این قابلیت به زودی اضافه خواهد شد. (کال‌بک: {call.data})")
+        
         self.bot.answer_callback_query(call.id)
+    
+    def process_broadcast_confirmation(self, uid, callback_data):
+        """پردازش تأیید ارسال همگانی"""
+        broadcast_type = callback_data.replace("confirm_broadcast_", "")
+        
+        if uid not in self.admin_states or 'data' not in self.admin_states[uid]:
+            self.bot.send_message(uid, "❌ اطلاعات ارسال یافت نشد.", reply_markup=self.kb_admin_main())
+            return
+        
+        data = self.admin_states[uid]['data']
+        message = data.get('message', '')
+        
+        if not message:
+            self.bot.send_message(uid, "❌ پیامی یافت نشد.", reply_markup=self.kb_admin_main())
+            return
+        
+        # ارسال پیام
+        if broadcast_type == 'all':
+            success, result = self.broadcast_manager.send_broadcast(uid, message)
+        elif broadcast_type == 'vip':
+            success, result = self.broadcast_manager.send_to_vip_users(uid, message)
+        else:
+            success, result = self.broadcast_manager.send_broadcast(uid, message)
+        
+        if success:
+            self.bot.send_message(uid, f"✅ {result}", reply_markup=self.kb_admin_main())
+        else:
+            self.bot.send_message(uid, f"❌ {result}", reply_markup=self.kb_admin_main())
+        
+        del self.admin_states[uid]
     
     def handle_vip_purchase(self, uid, vip_type):
         """پردازش خرید VIP"""
@@ -2543,6 +2915,28 @@ class ShadowTitanBotEnhanced:
         
         final_price, discount_percentage, original_price = self.vip_manager.get_final_price(vip_type)
         
+        # بررسی VIP رایگان
+        if vip_type == "christmas":
+            # هدیه VIP رایگان کریسمس
+            success, message = self.vip_manager.gift_vip(uid, vip_type, 90)
+            
+            if success:
+                self.bot.send_message(uid, f"""
+🎅 <b>تبریک! شما VIP رایگان کریسمس دریافت کردید!</b>
+
+🎁 <b>ویژه تعطیلات کریسمس:</b>
+• ۳ ماه VIP رایگان
+• دسترسی به تمامی امکانات VIP
+• هدیه ویژه کریسمس
+
+✨ از امکانات VIP لذت ببرید!
+                """)
+            else:
+                self.bot.send_message(uid, f"❌ {message}")
+            
+            return
+        
+        # خرید عادی VIP
         if user['coins'] < final_price:
             self.bot.send_message(uid, f"❌ سکه کافی ندارید!\nنیاز: {final_price:,} سکه\nموجودی: {user['coins']:,} سکه")
             return
@@ -2584,17 +2978,22 @@ class ShadowTitanBotEnhanced:
         print("=" * 60)
         print("🛡️  Shadow Titan v42.2 - Ultimate Management Edition")
         print("=" * 60)
-        print("✅ سیستم مدیریت تخفیف: فعال")
-        print("✅ سیستم مدیریت رویداد: فعال")
-        print("✅ سیستم مدیریت تعمیر: فعال")
-        print("✅ کنترل دسترسی VIP: کامل")
-        print("✅ قیمت‌گذاری پویا: فعال")
+        print("✅ سیستم ثبت‌نام: فعال (نام، سن، جنسیت، کشور)")
+        print("✅ سیستم احراز هویت ادمین: فعال")
+        print("✅ سیستم مدیریت VIP: کامل")
+        print("✅ سیستم ارسال همگانی: فعال")
+        print("✅ سیستم تنظیمات کاربر: فعال")
+        print("✅ VIP رایگان کریسمس: فعال")
         print("=" * 60)
         
         # ثبت هندلر کال‌بک
         @self.bot.callback_query_handler(func=lambda call: True)
         def handle_callback(call):
-            self.callback_handler(call)
+            try:
+                self.callback_handler(call)
+            except Exception as e:
+                logger.error(f"Error in callback handler: {e}")
+                logger.error("Exception traceback:\n%s", self.__hide_token(traceback.format_exc()))
         
         try:
             # راه‌اندازی وب سرور
@@ -2602,12 +3001,16 @@ class ShadowTitanBotEnhanced:
             web_thread.start()
             print("🌐 وب سرور: فعال (پورت 8080)")
             
+            # افزودن ادمین پیش‌فرض
+            self.db.add_admin(self.owner, self.admin_password, "super_admin")
+            
             # شروع ربات
             print("🤖 در حال اتصال به تلگرام...")
             self.bot.infinity_polling(skip_pending=True, timeout=60)
             
         except Exception as e:
             logger.error(f"ربات متوقف شد: {e}")
+            logger.error("Exception traceback:\n%s", self.__hide_token(traceback.format_exc()))
             print(f"❌ خطا: {e}")
             
             # تلاش برای بازیابی
