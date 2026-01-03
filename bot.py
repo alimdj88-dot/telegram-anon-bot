@@ -43,7 +43,7 @@ class DB:
             "messages": "db_messages.json",
             "config": "db_config.json",
             "missions": "db_missions.json",
-            "chats": "db_chats.json"  # فایل جدید برای ذخیره چت‌های فعال
+            "chats": "db_chats.json"
         }
         self.lock = threading.Lock()
         self.init_files()
@@ -62,24 +62,24 @@ class DB:
                 "daily": {
                     "date": "",
                     "mission": "ارسال 5 پیام در چت",
-                    "reward": 50,
                     "reward_type": "coins",
                     "reward_value": 50,
                     "type": "chat_count",
-                    "target": 5
+                    "target": 5,
+                    "description": "ارسال 5 پیام در چت"
                 },
                 "available": [
-                    {"name": "ارسال 5 پیام در چت", "reward_type": "coins", "reward_value": 50, "type": "chat_count", "target": 5},
-                    {"name": "ارسال 10 پیام در چت", "reward_type": "coins", "reward_value": 100, "type": "chat_count", "target": 10},
-                    {"name": "چت با 3 نفر مختلف", "reward_type": "coins", "reward_value": 80, "type": "unique_chats", "target": 3},
-                    {"name": "چت با 5 نفر مختلف", "reward_type": "coins", "reward_value": 150, "type": "unique_chats", "target": 5},
-                    {"name": "دعوت 2 نفر", "reward_type": "vip", "reward_value": "week", "type": "referrals", "target": 2},
-                    {"name": "دعوت 5 نفر", "reward_type": "vip", "reward_value": "month", "type": "referrals", "target": 5},
-                    {"name": "چرخاندن گردونه", "reward_type": "coins", "reward_value": 30, "type": "spin_wheel", "target": 1},
-                    {"name": "بازدید از پروفایل 3 بار", "reward_type": "coins", "reward_value": 40, "type": "profile_views", "target": 3}
+                    {"name": "ارسال 5 پیام در چت", "reward_type": "coins", "reward_value": 50, "type": "chat_count", "target": 5, "description": "ارسال 5 پیام در چت"},
+                    {"name": "ارسال 10 پیام در چت", "reward_type": "coins", "reward_value": 100, "type": "chat_count", "target": 10, "description": "ارسال 10 پیام در چت"},
+                    {"name": "چت با 3 نفر مختلف", "reward_type": "coins", "reward_value": 80, "type": "unique_chats", "target": 3, "description": "چت با 3 نفر مختلف"},
+                    {"name": "چت با 5 نفر مختلف", "reward_type": "coins", "reward_value": 150, "type": "unique_chats", "target": 5, "description": "چت با 5 نفر مختلف"},
+                    {"name": "دعوت 2 نفر", "reward_type": "vip", "reward_value": "week", "type": "referrals", "target": 2, "description": "دعوت 2 نفر به ربات"},
+                    {"name": "دعوت 5 نفر", "reward_type": "vip", "reward_value": "month", "type": "referrals", "target": 5, "description": "دعوت 5 نفر به ربات"},
+                    {"name": "چرخاندن گردونه", "reward_type": "coins", "reward_value": 30, "type": "spin_wheel", "target": 1, "description": "چرخاندن گردونه شانس"},
+                    {"name": "بازدید از پروفایل 3 بار", "reward_type": "coins", "reward_value": 40, "type": "profile_views", "target": 3, "description": "بازدید 3 بار از پروفایل خود"}
                 ]
             },
-            "chats": {}  # ساختار جدید برای ذخیره چت‌های فعال
+            "chats": {}
         }
         with self.lock:
             for key, path in self.files.items():
@@ -94,7 +94,7 @@ class DB:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"خطا در خواندن {key}: {e}")
-                return defaults.get(key, {}) if key in defaults else {}
+                return {}
 
     def write(self, key, data):
         with self.lock:
@@ -131,7 +131,7 @@ class ShadowTitanBot:
             "3month": 5000,
             "6month": 9000,
             "year": 15000,
-            "christmas_3month": 0
+            "christmas": 0  # VIP رایگان ویژه کریسمس - اصلاح شده
         }
 
         # مدت‌های VIP به ثانیه
@@ -141,7 +141,7 @@ class ShadowTitanBot:
             "3month": 90 * 24 * 3600,
             "6month": 180 * 24 * 3600,
             "year": 365 * 24 * 3600,
-            "christmas_3month": 90 * 24 * 3600
+            "christmas": 90 * 24 * 3600  # 3 ماه رایگان
         }
 
         # لیست فحش
@@ -154,15 +154,16 @@ class ShadowTitanBot:
             "خارکصه", "تخمم", "شاسگول", "پفیوز", "دیوث"
         ]
 
+        # متغیرهای هشدار تعمیر
+        self.maintenance_warning_active = False
+        self.maintenance_warning_event = None
+        self.maintenance_warning_thread = None
+        
         # بازیابی چت‌های فعال
         self.restore_active_chats()
         
         # بروزرسانی خودکار ماموریت روزانه
         self.auto_update_daily_mission()
-        
-        # تایمر برای هشدار تعمیر
-        self.maintenance_timer = None
-        self.maintenance_warning_active = False
         
         self.register_handlers()
         logger.info("Shadow Titan v42.0 شروع شد")
@@ -223,7 +224,8 @@ class ShadowTitanBot:
                 "reward_type": mission["reward_type"],
                 "reward_value": mission["reward_value"],
                 "type": mission["type"],
-                "target": mission["target"]
+                "target": mission["target"],
+                "description": mission.get("description", mission["name"])
             }
             self.db.write("missions", db_m)
             logger.info(f"ماموریت روزانه بروز شد: {mission['name']}")
@@ -301,7 +303,7 @@ class ShadowTitanBot:
         db_u["users"][uid]["vip_end"] = new_end
         
         # ذخیره اینکه کاربر VIP رایگان کریسمس را دریافت کرده
-        if duration_key == "christmas_3month":
+        if duration_key == "christmas":
             db_u["users"][uid]["christmas_vip_taken"] = True
         
         self.db.write("users", db_u)
@@ -314,7 +316,7 @@ class ShadowTitanBot:
                 "3month": "۳ ماه",
                 "6month": "۶ ماه",
                 "year": "۱ سال",
-                "christmas_3month": "۳ ماه رایگان"
+                "christmas": "۳ ماه رایگان"
             }.get(duration_key, "۳ ماه")
             
             # محاسبه مدت باقی‌مانده
@@ -528,10 +530,16 @@ class ShadowTitanBot:
             return
         
         self.maintenance_warning_active = True
+        self.maintenance_warning_event = threading.Event()
         
         def warning_thread():
             try:
                 for i in range(6):  # 6 * 30 ثانیه = 3 دقیقه
+                    # بررسی اگر رویداد تنظیم شده (یعنی لغو شده)
+                    if self.maintenance_warning_event.is_set():
+                        logger.info("هشدار تعمیر توسط ادمین لغو شد")
+                        return
+                    
                     time.sleep(30)
                     remaining = 3 - (i * 0.5)
                     
@@ -542,32 +550,90 @@ class ShadowTitanBot:
                             f"⚠️ <b>هشدار تعمیر و نگهداری</b>\n\n"
                             f"ربات {remaining:.1f} دقیقه دیگر به حالت تعمیر می‌رود.\n"
                             f"اطلاعات شما ذخیره خواهد شد.\n\n"
-                            f"📞 پشتیبانی: {self.support}"
+                            f"📞 پشتیبانی: {self.support}\n\n"
+                            f"برای لغو روی '⛔ لغو هشدار' کلیک کنید."
                         )
                     except:
                         pass
                 
-                # بعد از 3 دقیقه، فعال کردن حالت تعمیر
-                time.sleep(30)
-                db_c = self.db.read("config")
-                db_c["settings"]["maintenance"] = True
-                self.db.write("config", db_c)
-                
-                self.bot.send_message(
-                    admin_id,
-                    "✅ <b>ربات به حالت تعمیر و نگهداری رفت.</b>\n\n"
-                    "اکنون فقط کاربران VIP می‌توانند از ربات استفاده کنند."
-                )
+                # بعد از 3 دقیقه، بررسی اگر لغو نشده
+                if not self.maintenance_warning_event.is_set():
+                    time.sleep(30)
+                    db_c = self.db.read("config")
+                    db_c["settings"]["maintenance"] = True
+                    self.db.write("config", db_c)
+                    
+                    self.bot.send_message(
+                        admin_id,
+                        "✅ <b>ربات به حالت تعمیر و نگهداری رفت.</b>\n\n"
+                        "اکنون فقط کاربران VIP می‌توانند از ربات استفاده کنند."
+                    )
                 
                 self.maintenance_warning_active = False
+                self.maintenance_warning_event = None
                 
             except Exception as e:
                 logger.error(f"خطا در ترد هشدار تعمیر: {e}")
                 self.maintenance_warning_active = False
+                self.maintenance_warning_event = None
         
-        thread = threading.Thread(target=warning_thread)
-        thread.daemon = True
-        thread.start()
+        self.maintenance_warning_thread = threading.Thread(target=warning_thread)
+        self.maintenance_warning_thread.daemon = True
+        self.maintenance_warning_thread.start()
+        
+        return True
+
+    def cancel_maintenance_warning(self, admin_id):
+        """لغو هشدار تعمیر"""
+        if not self.maintenance_warning_active:
+            return False
+        
+        # تنظیم رویداد برای متوقف کردن ترد
+        if self.maintenance_warning_event:
+            self.maintenance_warning_event.set()
+        
+        self.maintenance_warning_active = False
+        
+        # ارسال پیام عذرخواهی به کاربران
+        self.send_maintenance_cancel_notification()
+        
+        return True
+
+    def send_maintenance_cancel_notification(self):
+        """ارسال پیام لغو هشدار به کاربران"""
+        db_u = self.db.read("users")
+        users_to_notify = []
+        
+        # فقط به کاربران VIP و کاربرانی که اخیرا فعال بودند پیام بده
+        for uid, user_data in db_u["users"].items():
+            if self.is_vip(uid):
+                users_to_notify.append(uid)
+        
+        # محدود کردن به 50 کاربر برای جلوگیری از اسپم
+        for uid in users_to_notify[:50]:
+            try:
+                self.bot.send_message(
+                    uid,
+                    "📢 <b>اطلاعیه مهم</b>\n\n"
+                    "هشدار تعمیر و نگهداری ربات لغو شد.\n"
+                    "ربات به حالت عادی بازگشته و می‌توانید از آن استفاده کنید.\n\n"
+                    "با تشکر از صبر و شکیبایی شما 🌹"
+                )
+            except Exception as e:
+                logger.error(f"خطا در ارسال پیام لغو به {uid}: {e}")
+        
+        logger.info(f"پیام لغو هشدار به {len(users_to_notify[:50])} کاربر ارسال شد")
+
+    def get_mission_description(self, mission_type, target):
+        """دریافت توضیح ماموریت بر اساس نوع"""
+        descriptions = {
+            "chat_count": f"ارسال {target} پیام در چت",
+            "unique_chats": f"چت با {target} نفر مختلف",
+            "referrals": f"دعوت {target} نفر به ربات",
+            "spin_wheel": "چرخاندن گردونه شانس",
+            "profile_views": f"بازدید {target} بار از پروفایل خود"
+        }
+        return descriptions.get(mission_type, f"ماموریت {mission_type}")
 
     def register_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -1105,8 +1171,12 @@ class ShadowTitanBot:
                 today = str(datetime.date.today())
                 completed = user.get("mission_completed_date") == today
                 
+                # دریافت توضیح ماموریت
+                mission_description = mission.get("description", self.get_mission_description(mission['type'], mission['target']))
+                
                 mission_text = f"<b>🎯 ماموریت روزانه</b>\n\n"
                 mission_text += f"📋 ماموریت: {mission['mission']}\n"
+                mission_text += f"📝 کار انجام‌دادنی: {mission_description}\n"
                 
                 # نمایش پاداش
                 if mission.get("reward_type") == "coins":
@@ -1207,7 +1277,7 @@ class ShadowTitanBot:
                     
                     kb.add(types.InlineKeyboardButton(
                         f"🎁 VIP ۳ ماه رایگان (ویژه کریسمس) - ۰ سکه",
-                        callback_data="buy_vip_christmas_3month"
+                        callback_data="buy_vip_christmas"
                     ))
                 elif user.get("christmas_vip_taken", False):
                     vip_text += "🎄 <b>شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید</b>\n\n"
@@ -1282,13 +1352,29 @@ class ShadowTitanBot:
 
                 elif text == "⚠️ هشدار تعمیر":
                     if self.maintenance_warning_active:
-                        self.bot.send_message(uid, "⚠️ هشدار تعمیر در حال اجراست!")
-                        return
-                    
-                    self.start_maintenance_warning(uid)
-                    self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر فعال شد!</b>\n\n"
-                                              "هر 30 ثانیه پیام هشدار ارسال می‌شود.\n"
-                                              "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.")
+                        # اگر هشدار فعال است، دکمه لغو نمایش بده
+                        kb = types.InlineKeyboardMarkup()
+                        kb.add(
+                            types.InlineKeyboardButton("⛔ لغو هشدار", callback_data="cancel_maintenance_warning"),
+                            types.InlineKeyboardButton("❌ انصراف", callback_data="cancel_no")
+                        )
+                        self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر در حال اجراست!</b>\n\n"
+                                                  "آیا می‌خواهید هشدار را لغو کنید؟", 
+                                            reply_markup=kb)
+                    else:
+                        # اگر هشدار فعال نیست، تأیید شروع
+                        kb = types.InlineKeyboardMarkup()
+                        kb.add(
+                            types.InlineKeyboardButton("✅ بله، شروع کن", callback_data="start_maintenance_warning"),
+                            types.InlineKeyboardButton("❌ خیر، لغو کن", callback_data="cancel_maintenance")
+                        )
+                        self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر و نگهداری</b>\n\n"
+                                                  "با شروع هشدار:\n"
+                                                  "• هر 30 ثانیه پیام هشدار ارسال می‌شود\n"
+                                                  "• بعد از 3 دقیقه ربات به حالت تعمیر می‌رود\n"
+                                                  "• کاربران VIP همچنان دسترسی خواهند داشت\n\n"
+                                                  "آیا مطمئن هستید؟", 
+                                            reply_markup=kb)
 
                 elif text == "🛠 تعمیر و نگهداری":
                     db_c = self.db.read("config")
@@ -1356,6 +1442,7 @@ class ShadowTitanBot:
                     mission_text = f"<b>🎯 مدیریت ماموریت‌های روزانه</b>\n\n"
                     mission_text += f"<b>ماموریت امروز:</b>\n"
                     mission_text += f"📋 {current_mission['mission']}\n"
+                    mission_text += f"📝 کار: {current_mission.get('description', self.get_mission_description(current_mission['type'], current_mission['target']))}\n"
                     
                     if current_mission.get("reward_type") == "coins":
                         mission_text += f"🎁 پاداش: {current_mission.get('reward_value', current_mission.get('reward', 0)):,} سکه\n"
@@ -1656,7 +1743,8 @@ class ShadowTitanBot:
                         mission_data = {
                             "name": user.get("add_mission_title"),
                             "type": user.get("add_mission_type"),
-                            "target": target
+                            "target": target,
+                            "description": self.get_mission_description(user.get("add_mission_type"), target)
                         }
                         
                         # تعیین پاداش
@@ -1678,6 +1766,7 @@ class ShadowTitanBot:
                         # نمایش اطلاعات ماموریت
                         mission_info = f"✅ <b>ماموریت جدید اضافه شد</b>\n\n"
                         mission_info += f"📝 عنوان: {mission_data['name']}\n"
+                        mission_info += f"📝 توضیح: {mission_data['description']}\n"
                         mission_info += f"🎯 نوع: {mission_data['type']}\n"
                         mission_info += f"🎯 هدف: {mission_data['target']}\n"
                         
@@ -2018,7 +2107,7 @@ class ShadowTitanBot:
                 vip_type = call.data.split("_")[2]
                 
                 # بررسی اگر VIP کریسمس است
-                if vip_type == "christmas_3month":
+                if vip_type == "christmas":
                     # VIP رایگان کریسمس
                     christmas_deadline = datetime.datetime(2026, 1, 15)
                     today = datetime.datetime.now()
@@ -2033,7 +2122,7 @@ class ShadowTitanBot:
                         return
                     
                     # افزودن VIP رایگان کریسمس
-                    self.add_vip(uid, "christmas_3month", "هدیه کریسمس")
+                    self.add_vip(uid, "christmas", "هدیه کریسمس")
                     self.bot.answer_callback_query(call.id, "✅ VIP رایگان کریسمس فعال شد!")
                     return
                 
@@ -2110,7 +2199,8 @@ class ShadowTitanBot:
                         "reward_type": mission.get("reward_type", "coins"),
                         "reward_value": mission.get("reward_value", mission.get("reward", 50)),
                         "type": mission["type"],
-                        "target": mission["target"]
+                        "target": mission["target"],
+                        "description": mission.get("description", self.get_mission_description(mission["type"], mission["target"]))
                     }
                     self.db.write("missions", db_m)
                     
@@ -2128,6 +2218,7 @@ class ShadowTitanBot:
                         reward_text = f"VIP {duration_name}"
                     
                     self.bot.edit_message_text(f"✅ ماموریت روزانه به '{mission['name']}' تغییر کرد.\n\n"
+                                              f"کار انجام‌دادنی: {mission.get('description', self.get_mission_description(mission['type'], mission['target']))}\n"
                                               f"پاداش: {reward_text}", 
                                               call.message.chat.id, call.message.message_id)
                     self.bot.answer_callback_query(call.id, "✅")
@@ -2156,6 +2247,7 @@ class ShadowTitanBot:
                     else:
                         missions_text += f"   🎁 پاداش: {m.get('reward', 0):,} سکه\n"
                     
+                    missions_text += f"   📝 کار: {m.get('description', self.get_mission_description(m['type'], m['target']))}\n"
                     missions_text += f"   🎯 نوع: {m['type']}\n"
                     missions_text += f"   🎯 هدف: {m['target']}\n\n"
                 
@@ -2188,6 +2280,80 @@ class ShadowTitanBot:
                 
                 self.bot.send_message(uid, f"⏰ تعداد دقیقه برای تمدید بن کاربر {target}:")
                 self.bot.answer_callback_query(call.id, "✅")
+
+            # مدیریت هشدار تعمیر
+            elif call.data == "start_maintenance_warning":
+                if uid != self.owner:
+                    return
+                
+                self.start_maintenance_warning(uid)
+                self.bot.edit_message_text("⚠️ <b>هشدار تعمیر فعال شد!</b>\n\n"
+                                          "هر 30 ثانیه پیام هشدار ارسال می‌شود.\n"
+                                          "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.\n\n"
+                                          "برای لغو روی '⚠️ هشدار تعمیر' کلیک کنید.", 
+                                          call.message.chat.id, call.message.message_id)
+                self.bot.answer_callback_query(call.id, "✅ هشدار فعال شد")
+
+            elif call.data == "cancel_maintenance":
+                if uid != self.owner:
+                    return
+                
+                self.bot.edit_message_text("❌ <b>هشدار تعمیر لغو شد</b>\n\n"
+                                          "ربات به حالت عادی ادامه می‌دهد.", 
+                                          call.message.chat.id, call.message.message_id)
+                self.bot.answer_callback_query(call.id, "✅ لغو شد")
+
+            elif call.data == "cancel_maintenance_warning":
+                if uid != self.owner:
+                    return
+                
+                # تأیید لغو هشدار
+                kb = types.InlineKeyboardMarkup()
+                kb.add(
+                    types.InlineKeyboardButton("✅ بله، لغو کن و عذرخواهی کن", callback_data="confirm_cancel_warning"),
+                    types.InlineKeyboardButton("❌ خیر، ادامه بده", callback_data="continue_warning")
+                )
+                
+                self.bot.edit_message_text("⚠️ <b>لغو هشدار تعمیر</b>\n\n"
+                                          "آیا مطمئن هستید که می‌خواهید هشدار را لغو کنید؟\n\n"
+                                          "اگر لغو کنید:\n"
+                                          "• پیام عذرخواهی به کاربران ارسال می‌شود\n"
+                                          "• هشدارها متوقف می‌شوند\n"
+                                          "• ربات به حالت تعمیر نمی‌رود", 
+                                          call.message.chat.id, call.message.message_id, 
+                                          reply_markup=kb)
+                self.bot.answer_callback_query(call.id, "⚠️")
+
+            elif call.data == "confirm_cancel_warning":
+                if uid != self.owner:
+                    return
+                
+                # لغو هشدار و ارسال عذرخواهی
+                if self.cancel_maintenance_warning(uid):
+                    self.bot.edit_message_text("✅ <b>هشدار تعمیر لغو شد</b>\n\n"
+                                              "پیام عذرخواهی به کاربران ارسال شد.\n"
+                                              "ربات به حالت عادی ادامه می‌دهد.", 
+                                              call.message.chat.id, call.message.message_id)
+                    self.bot.answer_callback_query(call.id, "✅ لغو شد و عذرخواهی ارسال شد")
+                else:
+                    self.bot.answer_callback_query(call.id, "❌ هشداری فعال نیست")
+
+            elif call.data == "continue_warning":
+                if uid != self.owner:
+                    return
+                
+                self.bot.edit_message_text("⚠️ <b>هشدار تعمیر ادامه دارد</b>\n\n"
+                                          "هشدارها همچنان ارسال می‌شوند.\n"
+                                          "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.", 
+                                          call.message.chat.id, call.message.message_id)
+                self.bot.answer_callback_query(call.id, "✅ ادامه دارد")
+
+            elif call.data == "cancel_no":
+                if uid != self.owner:
+                    return
+                
+                self.bot.answer_callback_query(call.id, "✅")
+                # پیام قبلی را حذف نکن، فقط دکمه را غیرفعال کن
 
     def run(self):
         """اجرای ربات"""
