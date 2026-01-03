@@ -17,6 +17,9 @@ import queue
 from flask import Flask
 from threading import Thread, Timer
 from zoneinfo import ZoneInfo
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import schedule
 
 # ==========================================
@@ -91,33 +94,17 @@ def run_web():
     app.run(host='0.0.0.0', port=8080, threaded=True)
 
 # ==========================================
-# سیستم رمزنگاری پیشرفته (با fallback برای cryptography)
+# سیستم رمزنگاری پیشرفته
 # ==========================================
-try:
-    from cryptography.fernet import Fernet
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-    CRYPTOGRAPHY_AVAILABLE = True
-except ImportError:
-    CRYPTOGRAPHY_AVAILABLE = False
-    print("⚠️ cryptography library not available, using simple encryption")
-
 class AdvancedEncryption:
     def __init__(self):
+        # تولید کلید امن یا بارگذاری از فایل
         self.key_file = "encryption.key"
+        self.key = self.load_or_generate_key()
+        self.fernet = Fernet(self.key)
         
-        if CRYPTOGRAPHY_AVAILABLE:
-            self.key = self.load_or_generate_key_cryptography()
-            self.fernet = Fernet(self.key)
-            self.use_cryptography = True
-            print("✅ Using cryptography library for encryption")
-        else:
-            self.key = self.load_or_generate_key_simple()
-            self.use_cryptography = False
-            print("⚠️ Using simple XOR encryption (for development only)")
-            
-    def load_or_generate_key_cryptography(self):
-        """بارگذاری یا تولید کلید رمزنگاری با cryptography"""
+    def load_or_generate_key(self):
+        """بارگذاری یا تولید کلید رمزنگاری"""
         if os.path.exists(self.key_file):
             with open(self.key_file, "rb") as f:
                 return f.read()
@@ -125,19 +112,7 @@ class AdvancedEncryption:
             key = Fernet.generate_key()
             with open(self.key_file, "wb") as f:
                 f.write(key)
-            os.chmod(self.key_file, 0o600)
-            return key
-    
-    def load_or_generate_key_simple(self):
-        """بارگذاری یا تولید کلید ساده"""
-        if os.path.exists(self.key_file):
-            with open(self.key_file, "rb") as f:
-                return f.read()
-        else:
-            # تولید کلید ساده 32 بایتی
-            key = os.urandom(32)
-            with open(self.key_file, "wb") as f:
-                f.write(key)
+            # تنظیم مجوز امن برای فایل کلید
             os.chmod(self.key_file, 0o600)
             return key
     
@@ -146,17 +121,8 @@ class AdvancedEncryption:
         try:
             if isinstance(data, dict):
                 data = json.dumps(data, ensure_ascii=False)
-            
-            if self.use_cryptography and CRYPTOGRAPHY_AVAILABLE:
-                encrypted = self.fernet.encrypt(data.encode())
-                return base64.urlsafe_b64encode(encrypted).decode()
-            else:
-                # رمزنگاری ساده XOR (فقط برای توسعه)
-                data_bytes = data.encode()
-                key_bytes = self.key[:len(data_bytes)] if len(data_bytes) < len(self.key) else self.key
-                encrypted = bytes([data_bytes[i] ^ key_bytes[i % len(key_bytes)] for i in range(len(data_bytes))])
-                return base64.urlsafe_b64encode(encrypted).decode()
-                
+            encrypted = self.fernet.encrypt(data.encode())
+            return base64.urlsafe_b64encode(encrypted).decode()
         except Exception as e:
             logger.error(f"Encryption error: {e}")
             return data
@@ -164,43 +130,28 @@ class AdvancedEncryption:
     def decrypt_data(self, encrypted_data):
         """رمزگشایی داده‌ها"""
         try:
-            if self.use_cryptography and CRYPTOGRAPHY_AVAILABLE:
-                encrypted = base64.urlsafe_b64decode(encrypted_data.encode())
-                decrypted = self.fernet.decrypt(encrypted).decode()
-            else:
-                # رمزگشایی ساده XOR
-                encrypted = base64.urlsafe_b64decode(encrypted_data.encode())
-                key_bytes = self.key[:len(encrypted)] if len(encrypted) < len(self.key) else self.key
-                decrypted = bytes([encrypted[i] ^ key_bytes[i % len(key_bytes)] for i in range(len(encrypted))]).decode()
-            
+            encrypted = base64.urlsafe_b64decode(encrypted_data.encode())
+            decrypted = self.fernet.decrypt(encrypted).decode()
             try:
                 return json.loads(decrypted)
             except:
                 return decrypted
-                
         except Exception as e:
             logger.error(f"Decryption error: {e}")
             return encrypted_data
     
     def hash_password(self, password, salt=None):
-        """هش کردن رمز عبور"""
-        if CRYPTOGRAPHY_AVAILABLE:
-            if salt is None:
-                salt = os.urandom(32)
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=salt,
-                iterations=100000,
-            )
-            key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-            return key.decode(), salt.hex()
-        else:
-            # هش ساده با SHA256
-            if salt is None:
-                salt = os.urandom(16).hex()
-            hash_obj = hashlib.sha256((password + salt).encode())
-            return hash_obj.hexdigest(), salt
+        """هش کردن رمز عبور با salt"""
+        if salt is None:
+            salt = os.urandom(32)
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+        return key.decode(), salt.hex()
 
 # ==========================================
 # سیستم دیتابیس امن SQLite با رمزنگاری
@@ -417,11 +368,11 @@ class SecureDatabase:
                 db_data = f.read()
             
             # رمزنگاری بکاپ
-            encrypted_backup = self.encryption.encrypt_data(db_data.decode() if isinstance(db_data, bytes) else db_data)
+            encrypted_backup = self.encryption.fernet.encrypt(db_data)
             
             # ذخیره بکاپ
             with open(backup_file, 'wb') as f:
-                f.write(encrypted_backup.encode() if isinstance(encrypted_backup, str) else encrypted_backup)
+                f.write(encrypted_backup)
             
             # حذف بکاپ‌های قدیمی (نگه‌داری 7 روز آخر)
             self.cleanup_old_backups(days=7)
@@ -450,7 +401,7 @@ class SecureDatabase:
             with open(backup_file, 'rb') as f:
                 encrypted_data = f.read()
             
-            decrypted_data = self.encryption.decrypt_data(encrypted_data.decode() if isinstance(encrypted_data, bytes) else encrypted_data)
+            decrypted_data = self.encryption.fernet.decrypt(encrypted_data)
             
             # ایجاد کپی از دیتابیس فعلی
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -459,7 +410,7 @@ class SecureDatabase:
             
             # نوشتن دیتابیس بازیابی شده
             with open(self.db_file, 'wb') as f:
-                f.write(decrypted_data.encode() if isinstance(decrypted_data, str) else decrypted_data)
+                f.write(decrypted_data)
             
             logger.info(f"Database restored from {backup_file}")
             return True
@@ -1558,7 +1509,7 @@ class ShadowTitanBotEnhanced:
             
             # ثبت‌نام یا خوش‌آمدگویی
             if not user:
-                self.register_new_user(uid)
+                self.register_new_user(uid, msg)
             else:
                 self.welcome_back_user(uid, user)
         
@@ -1591,6 +1542,11 @@ class ShadowTitanBotEnhanced:
                 self.handle_inappropriate_content(uid, analysis)
                 return
             
+            # بررسی ثبت نام
+            if user and user.get('state') == 'waiting_for_name':
+                self.process_registration_name(uid, text)
+                return
+            
             # پردازش دستورات مدیریتی
             if uid in self.admins:
                 if text == "🛡️ پنل مدیریت":
@@ -1602,70 +1558,63 @@ class ShadowTitanBotEnhanced:
                 
                 # بررسی stateهای مدیریتی
                 if uid in self.admin_states:
-                    state_handled = self.handle_admin_state(uid, text)
-                    if state_handled:
-                        return
+                    self.handle_admin_state(uid, text)
+                    return
             
             # پردازش دستورات کاربری
             self.handle_user_command(uid, text, user)
     
+    def process_registration_name(self, uid, name):
+        """پردازش نام کاربر در ثبت نام"""
+        user = self.db.get_user(uid)
+        if user:
+            user['name'] = name
+            user['state'] = 'registered'
+            self.db.save_user(uid, user)
+            
+            self.bot.send_message(uid, f"✅ ثبت نام شما با نام '{name}' تکمیل شد!", reply_markup=self.kb_main(uid))
+            self.welcome_back_user(uid, user)
+    
     def handle_admin_state(self, uid, text):
         """پردازش stateهای مدیریتی"""
-        if uid not in self.admin_states:
-            return False
-        
         state_data = self.admin_states[uid]
         state = state_data.get('state')
         
         if state == 'waiting_for_discount_vip_type':
             self.process_discount_vip_type(uid, text)
-            return True
         
         elif state == 'waiting_for_discount_percentage':
             self.process_discount_percentage(uid, text)
-            return True
         
         elif state == 'waiting_for_discount_dates':
             self.process_discount_dates(uid, text)
-            return True
         
         elif state == 'waiting_for_discount_reason':
             self.process_discount_reason(uid, text)
-            return True
         
         elif state == 'waiting_for_event_name':
             self.process_event_name(uid, text)
-            return True
         
         elif state == 'waiting_for_event_description':
             self.process_event_description(uid, text)
-            return True
         
         elif state == 'waiting_for_event_dates':
             self.process_event_dates(uid, text)
-            return True
         
         elif state == 'waiting_for_event_vip_plans':
             self.process_event_vip_plans(uid, text)
-            return True
         
         elif state == 'waiting_for_maintenance_mode':
             self.process_maintenance_mode(uid, text)
-            return True
         
         elif state == 'waiting_for_maintenance_vip_access':
             self.process_maintenance_vip_access(uid, text)
-            return True
         
         elif state == 'waiting_for_maintenance_reason':
             self.process_maintenance_reason(uid, text)
-            return True
         
         elif state == 'waiting_for_maintenance_dates':
             self.process_maintenance_dates(uid, text)
-            return True
-        
-        return False
     
     def handle_user_command(self, uid, text, user):
         """پردازش دستورات کاربری"""
@@ -1730,8 +1679,18 @@ class ShadowTitanBotEnhanced:
         }
         
         # نمایش انواع VIP برای انتخاب
+        vip_types = [
+            ("week", "۱ هفته"),
+            ("month", "۱ ماه"),
+            ("3month", "۳ ماه"),
+            ("6month", "۶ ماه"),
+            ("year", "۱ سال"),
+            ("all", "همه انواع")
+        ]
+        
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("۱ هفته", "۱ ماه", "۳ ماه", "۶ ماه", "۱ سال", "همه انواع")
+        for vip_id, vip_name in vip_types:
+            markup.add(f"{vip_name}")
         markup.add("❌ لغو")
         
         self.bot.send_message(uid, "🎯 <b>افزودن تخفیف جدید</b>\n\nلطفا نوع VIP مورد نظر برای تخفیف را انتخاب کنید:", reply_markup=markup)
@@ -1783,11 +1742,15 @@ class ShadowTitanBotEnhanced:
         self.admin_states[uid]['data']['percentage'] = percentage
         self.admin_states[uid]['state'] = 'waiting_for_discount_dates'
         
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        next_week = today + datetime.timedelta(days=7)
+        
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add("امروز تا فردا", "امروز تا هفته آینده")
         markup.add("❌ لغو")
         
-        self.bot.send_message(uid, f"✅ درصد تخفیف: {percentage}%\n\nلطفا بازه زمانی تخفیف را انتخاب کنید:", reply_markup=markup)
+        self.bot.send_message(uid, f"✅ درصد تخفیف: {percentage}%\n\nلطفا بازه زمانی تخفیف را انتخاب کنید:\n\n• امروز تا فردا\n• امروز تا هفته آینده\n• یا تاریخ دلخواه (فرمت: شروع-پایان)", reply_markup=markup)
     
     def process_discount_dates(self, uid, text):
         """پردازش تاریخ‌های تخفیف"""
@@ -1805,8 +1768,21 @@ class ShadowTitanBotEnhanced:
             start_date = today
             end_date = today + datetime.timedelta(days=7)
         else:
-            self.bot.send_message(uid, "❌ گزینه نامعتبر است. لطفا از دکمه‌ها استفاده کنید.")
-            return
+            # پردازش تاریخ دلخواه
+            try:
+                dates = text.split('-')
+                if len(dates) != 2:
+                    raise ValueError
+                
+                start_str, end_str = dates
+                start_date = datetime.datetime.strptime(start_str.strip(), '%Y/%m/%d').date()
+                end_date = datetime.datetime.strptime(end_str.strip(), '%Y/%m/%d').date()
+                
+                if start_date >= end_date:
+                    raise ValueError
+            except:
+                self.bot.send_message(uid, "❌ فرمت تاریخ نامعتبر است. لطفا از فرمت 'سال/ماه/روز-سال/ماه/روز' استفاده کنید.")
+                return
         
         self.admin_states[uid]['data']['start_date'] = start_date.isoformat()
         self.admin_states[uid]['data']['end_date'] = end_date.isoformat()
@@ -1949,11 +1925,16 @@ class ShadowTitanBotEnhanced:
         self.admin_states[uid]['data']['description'] = description
         self.admin_states[uid]['state'] = 'waiting_for_event_dates'
         
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+        next_week = today + datetime.timedelta(days=7)
+        next_month = today + datetime.timedelta(days=30)
+        
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add("امروز تا فردا", "امروز تا هفته آینده")
         markup.add("امروز تا ماه آینده", "❌ لغو")
         
-        self.bot.send_message(uid, f"✅ توضیح رویداد: {description or 'بدون توضیح'}\n\nلطفا بازه زمانی رویداد را انتخاب کنید:", reply_markup=markup)
+        self.bot.send_message(uid, f"✅ توضیح رویداد: {description or 'بدون توضیح'}\n\nلطفا بازه زمانی رویداد را انتخاب کنید:\n\n• امروز تا فردا\n• امروز تا هفته آینده\n• امروز تا ماه آینده\n• یا تاریخ دلخواه (فرمت: شروع-پایان)", reply_markup=markup)
     
     def process_event_dates(self, uid, text):
         """پردازش تاریخ‌های رویداد"""
@@ -1974,8 +1955,21 @@ class ShadowTitanBotEnhanced:
             start_date = today
             end_date = today + datetime.timedelta(days=30)
         else:
-            self.bot.send_message(uid, "❌ گزینه نامعتبر است. لطفا از دکمه‌ها استفاده کنید.")
-            return
+            # پردازش تاریخ دلخواه
+            try:
+                dates = text.split('-')
+                if len(dates) != 2:
+                    raise ValueError
+                
+                start_str, end_str = dates
+                start_date = datetime.datetime.strptime(start_str.strip(), '%Y/%m/%d').date()
+                end_date = datetime.datetime.strptime(end_str.strip(), '%Y/%m/%d').date()
+                
+                if start_date >= end_date:
+                    raise ValueError
+            except:
+                self.bot.send_message(uid, "❌ فرمت تاریخ نامعتبر است. لطفا از فرمت 'سال/ماه/روز-سال/ماه/روز' استفاده کنید.")
+                return
         
         self.admin_states[uid]['data']['start_date'] = start_date.isoformat()
         self.admin_states[uid]['data']['end_date'] = end_date.isoformat()
@@ -1984,7 +1978,7 @@ class ShadowTitanBotEnhanced:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("بدون پلن ویژه", "❌ لغو")
         
-        example = json.dumps([
+        self.bot.send_message(uid, f"✅ بازه زمانی: {start_date} تا {end_date}\n\nلطفا پلن‌های VIP ویژه رویداد را به صورت JSON وارد کنید (یا 'بدون پلن ویژه' را انتخاب کنید):\n\nمثال:\n" + json.dumps([
             {
                 "type": "month",
                 "name": "VIP ویژه رویداد",
@@ -1993,9 +1987,7 @@ class ShadowTitanBotEnhanced:
                 "description": "پلن ویژه برای شرکت‌کنندگان رویداد",
                 "features": ["ویژگی ۱", "ویژگی ۲"]
             }
-        ], ensure_ascii=False, indent=2)
-        
-        self.bot.send_message(uid, f"✅ بازه زمانی: {start_date} تا {end_date}\n\nلطفا پلن‌های VIP ویژه رویداد را به صورت JSON وارد کنید (یا 'بدون پلن ویژه' را انتخاب کنید):\n\nمثال:\n{example}", reply_markup=markup)
+        ], ensure_ascii=False, indent=2), reply_markup=markup)
     
     def process_event_vip_plans(self, uid, text):
         """پردازش پلن‌های VIP ویژه رویداد"""
@@ -2075,7 +2067,7 @@ class ShadowTitanBotEnhanced:
         markup.add("0 - غیرفعال", "1 - فقط غیر-VIP مسدود")
         markup.add("2 - همه مسدود", "❌ لغو")
         
-        self.bot.send_message(uid, "🔧 <b>تنظیم حالت تعمیر</b>\n\nلطفا حالت تعمیر را انتخاب کنید:", reply_markup=markup)
+        self.bot.send_message(uid, "🔧 <b>تنظیم حالت تعمیر</b>\n\nلطفا حالت تعمیر را انتخاب کنید:\n\n• 0 - غیرفعال\n• 1 - فعال (فقط کاربران غیر-VIP مسدود)\n• 2 - فعال (همه کاربران مسدود)", reply_markup=markup)
     
     def process_maintenance_mode(self, uid, text):
         """پردازش حالت تعمیر"""
@@ -2146,6 +2138,10 @@ class ShadowTitanBotEnhanced:
         
         self.admin_states[uid]['data']['reason'] = reason
         self.admin_states[uid]['state'] = 'waiting_for_maintenance_dates'
+        
+        today = datetime.datetime.now()
+        tomorrow = today + datetime.timedelta(hours=24)
+        next_hour = today + datetime.timedelta(hours=1)
         
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
         markup.add("۱ ساعت", "۲۴ ساعت")
@@ -2283,70 +2279,11 @@ class ShadowTitanBotEnhanced:
         self.bot.send_message(uid, message, reply_markup=kb)
     
     # ==========================================
-    # سایر متدها (مشابه قبل)
+    # سایر متدها
     # ==========================================
     def show_admin_panel(self, uid):
         """نمایش پنل مدیریت"""
         self.bot.send_message(uid, "🛡️ <b>پنل مدیریت پیشرفته</b>\n\nلطفا بخش مورد نظر را انتخاب کنید:", reply_markup=self.kb_admin_main())
-    
-    def show_vip_features(self, uid):
-        """نمایش ویژگی‌های VIP"""
-        user = self.db.get_user(uid)
-        is_vip = user and user.get('vip_end', 0) > time.time()
-        
-        if is_vip:
-            message = """
-⭐ <b>ویژگی‌های VIP شما:</b>
-
-<b>ویژگی‌های اصلی:</b>
-✅ چت ناشناس نامحدود
-✅ ارسال پیام ناشناس
-✅ شرکت در گردونه شانس روزانه
-✅ دسترسی به پروفایل پیشرفته
-
-<b>ویژگی‌های ویژه:</b>
-🎁 100 سکه هدیه ماهانه
-🚀 اولویت در جستجوی چت
-🎯 ماموریت‌های ویژه
-📊 آمار پیشرفته پروفایل
-
-<b>ویژگی‌های انحصاری:</b>
-⭐ نماد VIP طلایی در کنار نام
-⚡ سرعت چت 2 برابری
-👑 دسترسی به چت خصوصی ادمین
-📈 مشاهده آمار زنده ربات
-            """
-        else:
-            message = """
-🔓 <b>ویژگی‌های VIP</b>
-
-با خرید VIP به ویژگی‌های فوق‌العاده‌ای دسترسی پیدا می‌کنید:
-
-<b>ویژگی‌های اصلی (همه VIP ها):</b>
-✅ چت ناشناس نامحدود
-✅ ارسال پیام ناشناس
-✅ شرکت در گردونه شانس روزانه
-✅ دسترسی به پروفایل پیشرفته
-
-<b>ویژگی‌های ویژه (VIP 3 ماه و بیشتر):</b>
-🎁 100 سکه هدیه ماهانه
-🚀 اولویت در جستجوی چت
-🎯 ماموریت‌های ویژه
-📊 آمار پیشرفته پروفایل
-🔔 نوتیفیکیشن اختصاصی
-
-<b>ویژگی‌های انحصاری (VIP 6 ماه و بیشتر):</b>
-⭐ نماد VIP طلایی در کنار نام
-⚡ سرعت چت 2 برابری
-👑 دسترسی به چت خصوصی ادمین
-📈 مشاهده آمار زنده ربات
-🎪 ورود رایگان به همه رویدادها
-🛡️ پشتیبانی VIP 24/7
-
-برای مشاهده طرح‌های VIP روی «🎖 خرید VIP» کلیک کنید.
-            """
-        
-        self.bot.send_message(uid, message)
     
     def handle_inappropriate_content(self, uid, analysis):
         """مدیریت محتوای نامناسب"""
@@ -2372,13 +2309,13 @@ class ShadowTitanBotEnhanced:
             
             logger.warning(f"User {uid} banned. Reason: {reason}")
     
-    def register_new_user(self, uid):
+    def register_new_user(self, uid, msg):
         """ثبت‌نام کاربر جدید"""
         self.bot.send_message(uid, "🌟 <b>به Shadow Titan خوش آمدید!</b>\n\nلطفاً نام مستعار خود را وارد کنید:")
         
         user_data = {
             'name': '',
-            'state': 'name',
+            'state': 'waiting_for_name',
             'vip_end': 0,
             'coins': 50,  # سکه هدیه ثبت‌نام
             'total_referrals': 0,
@@ -2472,6 +2409,93 @@ class ShadowTitanBotEnhanced:
         
         self.bot.send_message(uid, message)
     
+    def show_vip_features(self, uid):
+        """نمایش ویژگی‌های VIP"""
+        user = self.db.get_user(uid)
+        is_vip = user and user.get('vip_end', 0) > time.time()
+        
+        if is_vip:
+            message = """
+⭐ <b>ویژگی‌های VIP شما:</b>
+
+<b>ویژگی‌های اصلی:</b>
+✅ چت ناشناس نامحدود
+✅ ارسال پیام ناشناس
+✅ شرکت در گردونه شانس روزانه
+✅ دسترسی به پروفایل پیشرفته
+
+<b>ویژگی‌های ویژه:</b>
+🎁 100 سکه هدیه ماهانه
+🚀 اولویت در جستجوی چت
+🎯 ماموریت‌های ویژه
+📊 آمار پیشرفته پروفایل
+
+<b>ویژگی‌های انحصاری:</b>
+⭐ نماد VIP طلایی در کنار نام
+⚡ سرعت چت 2 برابری
+👑 دسترسی به چت خصوصی ادمین
+📈 مشاهده آمار زنده ربات
+            """
+        else:
+            message = """
+🔓 <b>ویژگی‌های VIP</b>
+
+با خرید VIP به ویژگی‌های فوق‌العاده‌ای دسترسی پیدا می‌کنید:
+
+<b>ویژگی‌های اصلی (همه VIP ها):</b>
+✅ چت ناشناس نامحدود
+✅ ارسال پیام ناشناس
+✅ شرکت در گردونه شانس روزانه
+✅ دسترسی به پروفایل پیشرفته
+
+<b>ویژگی‌های ویژه (VIP 3 ماه و بیشتر):</b>
+🎁 100 سکه هدیه ماهانه
+🚀 اولویت در جستجوی چت
+🎯 ماموریت‌های ویژه
+📊 آمار پیشرفته پروفایل
+🔔 نوتیفیکیشن اختصاصی
+
+<b>ویژگی‌های انحصاری (VIP 6 ماه و بیشتر):</b>
+⭐ نماد VIP طلایی در کنار نام
+⚡ سرعت چت 2 برابری
+👑 دسترسی به چت خصوصی ادمین
+📈 مشاهده آمار زنده ربات
+🎪 ورود رایگان به همه رویدادها
+🛡️ پشتیبانی VIP 24/7
+
+برای مشاهده طرح‌های VIP روی «🎖 خرید VIP» کلیک کنید.
+            """
+        
+        self.bot.send_message(uid, message)
+    
+    def show_help(self, uid):
+        """نمایش راهنما"""
+        message = """
+❓ <b>راهنمای Shadow Titan</b>
+
+<b>دستورات اصلی:</b>
+• 🛰 شروع چت ناشناس - شروع چت تصادفی با کاربران دیگر
+• 👤 پروفایل من - مشاهده اطلاعات حساب شما
+• 📩 لینک ناشناس من - دریافت لینک برای دریافت پیام ناشناس
+• 📥 پیام‌های ناشناس - مشاهده پیام‌های دریافتی
+• 🎡 گردونه شانس - چرخاندن گردونه برای دریافت جوایز
+• 🎯 ماموریت روزانه - انجام ماموریت‌های روزانه
+• 👥 رفرال و دعوت - دعوت دوستان و دریافت پاداش
+• 🎖 خرید VIP - مشاهده و خرید طرح‌های VIP
+• 🎪 رویدادهای ویژه - شرکت در رویدادهای ویژه
+
+<b>ویژگی‌های VIP:</b>
+• چت ناشناس نامحدود
+• ارسال پیام ناشناس
+• سکه هدیه ماهانه
+• اولویت در جستجوی چت
+• و ده‌ها ویژگی دیگر...
+
+<b>پشتیبانی:</b>
+اگر سوالی دارید به @its_alimo پیام دهید.
+        """
+        self.bot.send_message(uid, message)
+    
     # ==========================================
     # کال‌بک‌ها
     # ==========================================
@@ -2508,10 +2532,6 @@ class ShadowTitanBotEnhanced:
         
         elif call.data == "insufficient_coins":
             self.bot.send_message(uid, "❌ سکه کافی ندارید! برای دریافت سکه می‌توانید:\n1. دوستان خود را دعوت کنید\n2. ماموریت‌های روزانه را انجام دهید\n3. در گردونه شانس شرکت کنید")
-        
-        elif call.data.startswith("admin_"):
-            # برای سایر کال‌بک‌های ادمین
-            self.bot.send_message(uid, f"این قابلیت به زودی اضافه خواهد شد. (کال‌بک: {call.data})")
         
         self.bot.answer_callback_query(call.id)
     
