@@ -1215,7 +1215,6 @@ class ShadowTitanBot:
                     mission_type = mission['type']
                     target = mission['target']
                     
-                    if mission_type == "chat_count
                     if mission_type == "chat_count":
                         progress = f"{user.get('daily_chat_count', 0)}/{target}"
                     elif mission_type == "unique_chats":
