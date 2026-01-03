@@ -1,2 +1,4 @@
-pyTelegramBotAPI
-flask
+pyTelegramBotAPI==4.19.1
+Flask==3.0.2
+cryptography==42.0.5
+schedule==1.2.1
