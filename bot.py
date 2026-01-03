@@ -1785,7 +1785,8 @@ class ShadowTitanBotEnhanced:
             'support_username': '@its_alimo'
         }
         
-        for key, value in default_settings:
+        # اصلاح شده: استفاده از .items()
+        for key, value in default_settings.items():
             if not self.db.get_bot_setting(key):
                 self.db.set_bot_setting(key, value, f"تنظیم پیش‌فرض {key}")
     
