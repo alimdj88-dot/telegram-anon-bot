@@ -8,6 +8,7 @@ import datetime
 import logging
 import random
 import threading
+import time
 from flask import Flask
 from threading import Thread
 from zoneinfo import ZoneInfo
@@ -41,7 +42,8 @@ class DB:
             "queue": "db_queue.json",
             "messages": "db_messages.json",
             "config": "db_config.json",
-            "missions": "db_missions.json"
+            "missions": "db_missions.json",
+            "chats": "db_chats.json"  # فایل جدید برای ذخیره چت‌های فعال
         }
         self.lock = threading.Lock()
         self.init_files()
@@ -61,20 +63,23 @@ class DB:
                     "date": "",
                     "mission": "ارسال 5 پیام در چت",
                     "reward": 50,
+                    "reward_type": "coins",
+                    "reward_value": 50,
                     "type": "chat_count",
                     "target": 5
                 },
                 "available": [
-                    {"name": "ارسال 5 پیام در چت", "reward": 50, "type": "chat_count", "target": 5},
-                    {"name": "ارسال 10 پیام در چت", "reward": 100, "type": "chat_count", "target": 10},
-                    {"name": "چت با 3 نفر مختلف", "reward": 80, "type": "unique_chats", "target": 3},
-                    {"name": "چت با 5 نفر مختلف", "reward": 150, "type": "unique_chats", "target": 5},
-                    {"name": "دعوت 2 نفر", "reward": 200, "type": "referrals", "target": 2},
-                    {"name": "دعوت 5 نفر", "reward": 500, "type": "referrals", "target": 5},
-                    {"name": "چرخاندن گردونه", "reward": 30, "type": "spin_wheel", "target": 1},
-                    {"name": "بازدید از پروفایل 3 بار", "reward": 40, "type": "profile_views", "target": 3}
+                    {"name": "ارسال 5 پیام در چت", "reward_type": "coins", "reward_value": 50, "type": "chat_count", "target": 5},
+                    {"name": "ارسال 10 پیام در چت", "reward_type": "coins", "reward_value": 100, "type": "chat_count", "target": 10},
+                    {"name": "چت با 3 نفر مختلف", "reward_type": "coins", "reward_value": 80, "type": "unique_chats", "target": 3},
+                    {"name": "چت با 5 نفر مختلف", "reward_type": "coins", "reward_value": 150, "type": "unique_chats", "target": 5},
+                    {"name": "دعوت 2 نفر", "reward_type": "vip", "reward_value": "week", "type": "referrals", "target": 2},
+                    {"name": "دعوت 5 نفر", "reward_type": "vip", "reward_value": "month", "type": "referrals", "target": 5},
+                    {"name": "چرخاندن گردونه", "reward_type": "coins", "reward_value": 30, "type": "spin_wheel", "target": 1},
+                    {"name": "بازدید از پروفایل 3 بار", "reward_type": "coins", "reward_value": 40, "type": "profile_views", "target": 3}
                 ]
-            }
+            },
+            "chats": {}  # ساختار جدید برای ذخیره چت‌های فعال
         }
         with self.lock:
             for key, path in self.files.items():
@@ -87,9 +92,9 @@ class DB:
             try:
                 with open(self.files[key], "r", encoding="utf-8") as f:
                     return json.load(f)
-            except:
-                logger.error(f"خطا در خواندن {key}")
-                return {}
+            except Exception as e:
+                logger.error(f"خطا در خواندن {key}: {e}")
+                return defaults.get(key, {}) if key in defaults else {}
 
     def write(self, key, data):
         with self.lock:
@@ -126,7 +131,7 @@ class ShadowTitanBot:
             "3month": 5000,
             "6month": 9000,
             "year": 15000,
-            "christmas_3month": 0  # VIP رایگان ویژه کریسمس - کلید تغییر یافته
+            "christmas_3month": 0
         }
 
         # مدت‌های VIP به ثانیه
@@ -136,7 +141,7 @@ class ShadowTitanBot:
             "3month": 90 * 24 * 3600,
             "6month": 180 * 24 * 3600,
             "year": 365 * 24 * 3600,
-            "christmas_3month": 90 * 24 * 3600  # 3 ماه رایگان
+            "christmas_3month": 90 * 24 * 3600
         }
 
         # لیست فحش
@@ -149,11 +154,60 @@ class ShadowTitanBot:
             "خارکصه", "تخمم", "شاسگول", "پفیوز", "دیوث"
         ]
 
+        # بازیابی چت‌های فعال
+        self.restore_active_chats()
+        
         # بروزرسانی خودکار ماموریت روزانه
         self.auto_update_daily_mission()
         
+        # تایمر برای هشدار تعمیر
+        self.maintenance_timer = None
+        self.maintenance_warning_active = False
+        
         self.register_handlers()
         logger.info("Shadow Titan v42.0 شروع شد")
+
+    def restore_active_chats(self):
+        """بازیابی چت‌های فعال از دیتابیس"""
+        db_c = self.db.read("chats")
+        db_u = self.db.read("users")
+        
+        for uid, partner in db_c.items():
+            if uid in db_u["users"] and partner in db_u["users"]:
+                # بررسی کنید که هر دو کاربر هنوز موجود هستند
+                if db_u["users"][uid].get("state") == "idle":
+                    db_u["users"][uid]["partner"] = partner
+                    db_u["users"][partner]["partner"] = uid
+                    logger.info(f"چت بازیابی شد: {uid} <-> {partner}")
+                    
+                    try:
+                        self.bot.send_message(uid, "🔄 <b>چت شما بازیابی شد!</b>\n\n"
+                                                  "ربات ری‌استارت شده بود. می‌توانید ادامه دهید.", 
+                                              reply_markup=self.kb_chatting())
+                        self.bot.send_message(partner, "🔄 <b>چت شما بازیابی شد!</b>\n\n"
+                                                      "ربات ری‌استارت شده بود. می‌توانید ادامه دهید.", 
+                                              reply_markup=self.kb_chatting())
+                    except Exception as e:
+                        logger.error(f"خطا در ارسال پیام بازیابی چت: {e}")
+        
+        self.db.write("users", db_u)
+        logger.info("بازیابی چت‌های فعال انجام شد")
+
+    def save_active_chat(self, uid, partner):
+        """ذخیره چت فعال در دیتابیس"""
+        db_c = self.db.read("chats")
+        db_c[uid] = partner
+        self.db.write("chats", db_c)
+
+    def remove_active_chat(self, uid):
+        """حذف چت فعال از دیتابیس"""
+        db_c = self.db.read("chats")
+        if uid in db_c:
+            partner = db_c[uid]
+            if partner in db_c and db_c[partner] == uid:
+                del db_c[partner]
+            del db_c[uid]
+            self.db.write("chats", db_c)
 
     def auto_update_daily_mission(self):
         """بروزرسانی خودکار ماموریت روزانه"""
@@ -166,7 +220,8 @@ class ShadowTitanBot:
             db_m["daily"] = {
                 "date": today,
                 "mission": mission["name"],
-                "reward": mission["reward"],
+                "reward_type": mission["reward_type"],
+                "reward_value": mission["reward_value"],
                 "type": mission["type"],
                 "target": mission["target"]
             }
@@ -330,8 +385,14 @@ class ShadowTitanBot:
                 completed = True
         
         if completed:
-            reward = mission["reward"]
-            self.add_coins(uid, reward, f"ماموریت روزانه: {mission['mission']}")
+            reward_type = mission.get("reward_type", "coins")
+            reward_value = mission.get("reward_value", 50)
+            
+            if reward_type == "coins":
+                self.add_coins(uid, reward_value, f"ماموریت روزانه: {mission['mission']}")
+            elif reward_type == "vip":
+                self.add_vip(uid, reward_value, f"ماموریت روزانه: {mission['mission']}")
+            
             user["mission_completed_date"] = today
             self.db.write("users", db_u)
             return True
@@ -356,8 +417,19 @@ class ShadowTitanBot:
         end_time = datetime.datetime.now().timestamp() + minutes * 60
         db_b["temporary"][uid] = {"end": end_time, "reason": reason}
         self.db.write("bans", db_b)
+        
         try:
-            self.bot.send_message(uid, f"🚫 <b>بن موقت {minutes} دقیقه</b>\n"
+            remaining_hours = minutes // 60
+            remaining_minutes = minutes % 60
+            time_text = ""
+            if remaining_hours > 0:
+                time_text += f"{remaining_hours} ساعت"
+            if remaining_minutes > 0:
+                if time_text:
+                    time_text += " و "
+                time_text += f"{remaining_minutes} دقیقه"
+            
+            self.bot.send_message(uid, f"🚫 <b>بن موقت {time_text}</b>\n"
                                       f"دلیل: {reason}\n"
                                       f"پشتیبانی: {self.support}")
         except Exception as e:
@@ -387,7 +459,7 @@ class ShadowTitanBot:
         except Exception as e:
             logger.error(f"خطا در ارسال گزارش بن خودکار: {e}")
 
-    def end_chat(self, a, b, msg="ترک کرد"):
+    def end_chat(self, a, b, msg="به دلیل تخلف از چت خارج شد"):
         """پایان چت"""
         db_u = self.db.read("users")
         if a in db_u["users"]:
@@ -396,12 +468,16 @@ class ShadowTitanBot:
             db_u["users"][b]["partner"] = None
         self.db.write("users", db_u)
         
+        # حذف از چت‌های فعال
+        self.remove_active_chat(a)
+        self.remove_active_chat(b)
+        
         try:
             self.bot.send_message(a, "چت با موفقیت پایان یافت 🌙", reply_markup=self.kb_main(a))
         except:
             pass
         try:
-            self.bot.send_message(b, f"هم‌صحبت شما چت را {msg} 🌙", reply_markup=self.kb_main(b))
+            self.bot.send_message(b, f"هم‌صحبت شما {msg} 🌙", reply_markup=self.kb_main(b))
         except:
             pass
 
@@ -425,12 +501,12 @@ class ShadowTitanBot:
 
     def kb_admin(self):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("📈 آمار کامل", "🛠 تعمیر و نگهداری")
-        markup.add("🎖 گیفت VIP تکی", "🎖 گیفت VIP همگانی")
-        markup.add("❌ حذف VIP", "📋 لیست VIP")
-        markup.add("💰 اهدای سکه", "🎯 مدیریت ماموریت‌ها")
-        markup.add("📁 دانلود دیتابیس", "🚫 لیست بن‌شده‌ها")
-        markup.add("🔙 بازگشت به منو")
+        markup.add("📈 آمار کامل", "⚠️ هشدار تعمیر")
+        markup.add("🛠 تعمیر و نگهداری", "🎖 گیفت VIP تکی")
+        markup.add("🎖 گیفت VIP همگانی", "❌ حذف VIP")
+        markup.add("📋 لیست VIP", "💰 اهدای سکه")
+        markup.add("🎯 مدیریت ماموریت‌ها", "📁 دانلود دیتابیس")
+        markup.add("🚫 لیست بن‌شده‌ها", "🔙 بازگشت به منو")
         return markup
 
     def kb_report(self):
@@ -445,6 +521,53 @@ class ShadowTitanBot:
         )
         markup.add(types.InlineKeyboardButton("لغو ❌", callback_data="rep_cancel"))
         return markup
+
+    def start_maintenance_warning(self, admin_id):
+        """شروع هشدار تعمیر و نگهداری"""
+        if self.maintenance_warning_active:
+            return
+        
+        self.maintenance_warning_active = True
+        
+        def warning_thread():
+            try:
+                for i in range(6):  # 6 * 30 ثانیه = 3 دقیقه
+                    time.sleep(30)
+                    remaining = 3 - (i * 0.5)
+                    
+                    # ارسال هشدار به ادمین
+                    try:
+                        self.bot.send_message(
+                            admin_id,
+                            f"⚠️ <b>هشدار تعمیر و نگهداری</b>\n\n"
+                            f"ربات {remaining:.1f} دقیقه دیگر به حالت تعمیر می‌رود.\n"
+                            f"اطلاعات شما ذخیره خواهد شد.\n\n"
+                            f"📞 پشتیبانی: {self.support}"
+                        )
+                    except:
+                        pass
+                
+                # بعد از 3 دقیقه، فعال کردن حالت تعمیر
+                time.sleep(30)
+                db_c = self.db.read("config")
+                db_c["settings"]["maintenance"] = True
+                self.db.write("config", db_c)
+                
+                self.bot.send_message(
+                    admin_id,
+                    "✅ <b>ربات به حالت تعمیر و نگهداری رفت.</b>\n\n"
+                    "اکنون فقط کاربران VIP می‌توانند از ربات استفاده کنند."
+                )
+                
+                self.maintenance_warning_active = False
+                
+            except Exception as e:
+                logger.error(f"خطا در ترد هشدار تعمیر: {e}")
+                self.maintenance_warning_active = False
+        
+        thread = threading.Thread(target=warning_thread)
+        thread.daemon = True
+        thread.start()
 
     def register_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -466,11 +589,22 @@ class ShadowTitanBot:
 
             # چک بن موقت
             if uid in db_b["temporary"]:
-                end = db_b["temporary"][uid]["end"]
+                temp_data = db_b["temporary"][uid]
+                end = temp_data["end"]
                 if datetime.datetime.now().timestamp() < end:
                     rem = int((end - datetime.datetime.now().timestamp()) / 60)
+                    hours = rem // 60
+                    minutes = rem % 60
+                    time_text = ""
+                    if hours > 0:
+                        time_text += f"{hours} ساعت"
+                    if minutes > 0:
+                        if time_text:
+                            time_text += " و "
+                        time_text += f"{minutes} دقیقه"
+                    
                     self.bot.send_message(uid, f"🚫 <b>بن موقت هستید!</b>\n"
-                                              f"زمان باقی‌مانده: {rem} دقیقه\n"
+                                              f"زمان باقی‌مانده: {time_text}\n"
                                               f"پشتیبانی: {self.support}")
                     return
                 else:
@@ -755,7 +889,7 @@ class ShadowTitanBot:
                         blocks.append(partner)
                     user["blocks"] = blocks
                     self.db.write("users", db_u)
-                    self.end_chat(uid, partner, "بلاک کرد")
+                    self.end_chat(uid, partner, "شما را بلاک کرد")
                     return
 
                 if msg.text == "👥 درخواست آیدی":
@@ -788,14 +922,14 @@ class ShadowTitanBot:
                             if user.get("had_temp_ban", False):
                                 self.ban_perm(uid, "فحاشی مکرر پس از بن موقت")
                                 self.report_auto_ban(uid, "فحاشی مکرر پس از بن موقت", "بن دائم")
-                                self.end_chat(uid, partner, "بن دائم شد")
+                                self.end_chat(uid, partner, "به دلیل تخلف بن دائم شد")
                             else:
                                 self.ban_temp(uid, 1440, "فحاشی مکرر (بن ۲۴ ساعته)")
                                 user["had_temp_ban"] = True
                                 user["warns"] = 0
                                 self.db.write("users", db_u)
                                 self.report_auto_ban(uid, "فحاشی مکرر (اولین بار)", "بن ۲۴ ساعته")
-                                self.end_chat(uid, partner, "بن ۲۴ ساعته شد")
+                                self.end_chat(uid, partner, "به دلیل تخلف بن موقت شد")
                         else:
                             self.bot.send_message(uid, f"⚠️ <b>اخطار {user['warns']}/3</b>\n\n"
                                                       "محتوای نامناسب ممنوع است!")
@@ -973,7 +1107,21 @@ class ShadowTitanBot:
                 
                 mission_text = f"<b>🎯 ماموریت روزانه</b>\n\n"
                 mission_text += f"📋 ماموریت: {mission['mission']}\n"
-                mission_text += f"🎁 پاداش: {mission['reward']:,} سکه\n\n"
+                
+                # نمایش پاداش
+                if mission.get("reward_type") == "coins":
+                    mission_text += f"🎁 پاداش: {mission.get('reward_value', mission.get('reward', 0)):,} سکه\n\n"
+                elif mission.get("reward_type") == "vip":
+                    duration_name = {
+                        "week": "۱ هفته",
+                        "month": "۱ ماه",
+                        "3month": "۳ ماه",
+                        "6month": "۶ ماه",
+                        "year": "۱ سال"
+                    }.get(mission.get("reward_value", "week"), "VIP")
+                    mission_text += f"🎁 پاداش: VIP {duration_name}\n\n"
+                else:
+                    mission_text += f"🎁 پاداش: {mission.get('reward', 0):,} سکه\n\n"
                 
                 if completed:
                     mission_text += "✅ <b>تکمیل شده!</b>\n\nفردا ماموریت جدید منتظر شماست 🌟"
@@ -1127,11 +1275,23 @@ class ShadowTitanBot:
                     stats_text += f"🎖 VIP فعال: {vips:,}\n"
                     stats_text += f"💰 کل سکه‌ها: {total_coins:,}\n"
                     stats_text += f"🚫 بن دائم: {len(db_b.get('permanent', {})):,}\n"
-                    stats_text += f"⏰ بن موقت: {len(db_b.get('temporary', {})):,}"
+                    stats_text += f"⏰ بن موقت: {len(db_b.get('temporary', {})):,}\n"
+                    stats_text += f"💬 چت‌های فعال: {len(self.db.read('chats')):,}"
                     
                     self.bot.send_message(uid, stats_text)
 
+                elif text == "⚠️ هشدار تعمیر":
+                    if self.maintenance_warning_active:
+                        self.bot.send_message(uid, "⚠️ هشدار تعمیر در حال اجراست!")
+                        return
+                    
+                    self.start_maintenance_warning(uid)
+                    self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر فعال شد!</b>\n\n"
+                                              "هر 30 ثانیه پیام هشدار ارسال می‌شود.\n"
+                                              "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.")
+
                 elif text == "🛠 تعمیر و نگهداری":
+                    db_c = self.db.read("config")
                     db_c["settings"]["maintenance"] = not db_c["settings"].get("maintenance", False)
                     self.db.write("config", db_c)
                     status = "🟢 فعال" if db_c["settings"]["maintenance"] else "🔴 غیرفعال"
@@ -1196,7 +1356,21 @@ class ShadowTitanBot:
                     mission_text = f"<b>🎯 مدیریت ماموریت‌های روزانه</b>\n\n"
                     mission_text += f"<b>ماموریت امروز:</b>\n"
                     mission_text += f"📋 {current_mission['mission']}\n"
-                    mission_text += f"🎁 پاداش: {current_mission['reward']:,} سکه\n"
+                    
+                    if current_mission.get("reward_type") == "coins":
+                        mission_text += f"🎁 پاداش: {current_mission.get('reward_value', current_mission.get('reward', 0)):,} سکه\n"
+                    elif current_mission.get("reward_type") == "vip":
+                        duration_name = {
+                            "week": "۱ هفته",
+                            "month": "۱ ماه",
+                            "3month": "۳ ماه",
+                            "6month": "۶ ماه",
+                            "year": "۱ سال"
+                        }.get(current_mission.get("reward_value", "week"), "VIP")
+                        mission_text += f"🎁 پاداش: VIP {duration_name}\n"
+                    else:
+                        mission_text += f"🎁 پاداش: {current_mission.get('reward', 0):,} سکه\n"
+                    
                     mission_text += f"📅 تاریخ: {current_mission['date']}\n\n"
                     
                     kb = types.InlineKeyboardMarkup(row_width=1)
@@ -1238,7 +1412,11 @@ class ShadowTitanBot:
                         for ban_uid, data in list(db_b["temporary"].items())[:20]:
                             name = db_u["users"].get(ban_uid, {}).get("name", "نامشخص")
                             end_time = datetime.datetime.fromtimestamp(data["end"]).strftime("%Y-%m-%d %H:%M")
-                            ban_text += f"🆔 <code>{ban_uid}</code> - {name}\n⏰ تا {end_time}\n\n"
+                            ban_text += f"🆔 <code>{ban_uid}</code> - {name}\n⏰ تا {end_time}\n"
+                            kb.add(types.InlineKeyboardButton(
+                                f"⏰ تمدید بن {ban_uid}", 
+                                callback_data=f"extend_ban_{ban_uid}"
+                            ))
                     
                     if not db_b.get("permanent") and not db_b.get("temporary"):
                         ban_text += "✅ هیچ کاربر بن‌شده‌ای وجود ندارد"
@@ -1383,10 +1561,169 @@ class ShadowTitanBot:
                         self.db.write("users", db_u)
                     return
 
+                elif admin_state == "admin_temp_ban_minutes":
+                    if msg.text.isdigit():
+                        minutes = int(msg.text)
+                        target = user.get("admin_temp_ban_target")
+                        if target:
+                            self.ban_temp(target, minutes, "بن موقت توسط ادمین")
+                            self.bot.send_message(uid, f"✅ بن موقت {minutes} دقیقه‌ای برای کاربر {target} اعمال شد.", 
+                                                reply_markup=self.kb_admin())
+                        else:
+                            self.bot.send_message(uid, "❌ خطا در اعمال بن موقت.")
+                        user["admin_state"] = None
+                        self.db.write("users", db_u)
+                    else:
+                        self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                    return
+
+                # Stateهای افزودن ماموریت جدید
+                elif admin_state == "add_mission_reward_type":
+                    if text == "🎖 VIP":
+                        user["add_mission_reward_type"] = "vip"
+                        user["admin_state"] = "add_mission_vip_duration"
+                        self.db.write("users", db_u)
+                        
+                        kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                        kb.add("۱ هفته", "۱ ماه", "۳ ماه")
+                        kb.add("۶ ماه", "۱ سال", "🔙 بازگشت")
+                        self.bot.send_message(uid, "⏰ مدت VIP را انتخاب کنید:", reply_markup=kb)
+                    elif text == "💰 سکه":
+                        user["add_mission_reward_type"] = "coins"
+                        user["admin_state"] = "add_mission_coins_amount"
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "💰 مقدار سکه را وارد کنید:")
+                    return
+
+                elif admin_state == "add_mission_vip_duration":
+                    duration_map = {
+                        "۱ هفته": "week",
+                        "۱ ماه": "month",
+                        "۳ ماه": "3month",
+                        "۶ ماه": "6month",
+                        "۱ سال": "year"
+                    }
+                    
+                    if text in duration_map:
+                        user["add_mission_vip_duration"] = duration_map[text]
+                        user["admin_state"] = "add_mission_title"
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "📝 عنوان ماموریت را وارد کنید:")
+                    return
+
+                elif admin_state == "add_mission_coins_amount":
+                    if msg.text.isdigit():
+                        user["add_mission_coins_amount"] = int(msg.text)
+                        user["admin_state"] = "add_mission_title"
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "📝 عنوان ماموریت را وارد کنید:")
+                    else:
+                        self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                    return
+
+                elif admin_state == "add_mission_title":
+                    user["add_mission_title"] = msg.text
+                    user["admin_state"] = "add_mission_type"
+                    self.db.write("users", db_u)
+                    
+                    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                    kb.add("chat_count", "unique_chats", "referrals")
+                    kb.add("spin_wheel", "profile_views", "🔙 بازگشت")
+                    self.bot.send_message(uid, "🎯 نوع ماموریت را انتخاب کنید:\n\n"
+                                              "• chat_count: تعداد پیام در چت\n"
+                                              "• unique_chats: چت با افراد مختلف\n"
+                                              "• referrals: دعوت افراد\n"
+                                              "• spin_wheel: چرخاندن گردونه\n"
+                                              "• profile_views: بازدید از پروفایل", 
+                                        reply_markup=kb)
+                    return
+
+                elif admin_state == "add_mission_type":
+                    if text in ["chat_count", "unique_chats", "referrals", "spin_wheel", "profile_views"]:
+                        user["add_mission_type"] = text
+                        user["admin_state"] = "add_mission_target"
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "🎯 هدف (عدد) را وارد کنید:")
+                    else:
+                        self.bot.send_message(uid, "❌ لطفا از گزینه‌ها استفاده کنید.")
+                    return
+
+                elif admin_state == "add_mission_target":
+                    if msg.text.isdigit():
+                        target = int(msg.text)
+                        
+                        # جمع‌آوری اطلاعات ماموریت
+                        mission_data = {
+                            "name": user.get("add_mission_title"),
+                            "type": user.get("add_mission_type"),
+                            "target": target
+                        }
+                        
+                        # تعیین پاداش
+                        reward_type = user.get("add_mission_reward_type")
+                        if reward_type == "vip":
+                            mission_data["reward_type"] = "vip"
+                            mission_data["reward_value"] = user.get("add_mission_vip_duration", "week")
+                            mission_data["reward"] = 0
+                        else:
+                            mission_data["reward_type"] = "coins"
+                            mission_data["reward_value"] = user.get("add_mission_coins_amount", 50)
+                            mission_data["reward"] = user.get("add_mission_coins_amount", 50)
+                        
+                        # ذخیره ماموریت
+                        db_m = self.db.read("missions")
+                        db_m["available"].append(mission_data)
+                        self.db.write("missions", db_m)
+                        
+                        # نمایش اطلاعات ماموریت
+                        mission_info = f"✅ <b>ماموریت جدید اضافه شد</b>\n\n"
+                        mission_info += f"📝 عنوان: {mission_data['name']}\n"
+                        mission_info += f"🎯 نوع: {mission_data['type']}\n"
+                        mission_info += f"🎯 هدف: {mission_data['target']}\n"
+                        
+                        if mission_data["reward_type"] == "coins":
+                            mission_info += f"💰 پاداش: {mission_data['reward_value']:,} سکه\n"
+                        else:
+                            duration_name = {
+                                "week": "۱ هفته",
+                                "month": "۱ ماه",
+                                "3month": "۳ ماه",
+                                "6month": "۶ ماه",
+                                "year": "۱ سال"
+                            }.get(mission_data["reward_value"], "VIP")
+                            mission_info += f"🎖 پاداش: VIP {duration_name}\n"
+                        
+                        self.bot.send_message(uid, mission_info, reply_markup=self.kb_admin())
+                        
+                        # پاک کردن stateها
+                        keys_to_delete = [
+                            "add_mission_reward_type", "add_mission_vip_duration",
+                            "add_mission_coins_amount", "add_mission_title",
+                            "add_mission_type", "add_mission_target", "admin_state"
+                        ]
+                        for key in keys_to_delete:
+                            if key in user:
+                                del user[key]
+                        self.db.write("users", db_u)
+                    else:
+                        self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                    return
+
             # بازگشت به منو
             if "بازگشت" in text or text == "🔙 بازگشت به منو":
                 user["state"] = "idle"
                 user["admin_state"] = None
+                
+                # پاک کردن stateهای افزودن ماموریت
+                keys_to_delete = [
+                    "add_mission_reward_type", "add_mission_vip_duration",
+                    "add_mission_coins_amount", "add_mission_title",
+                    "add_mission_type", "add_mission_target"
+                ]
+                for key in keys_to_delete:
+                    if key in user:
+                        del user[key]
+                
                 self.db.write("users", db_u)
                 self.bot.send_message(uid, "🏠 منوی اصلی", reply_markup=self.kb_main(uid))
 
@@ -1472,6 +1809,10 @@ class ShadowTitanBot:
                     user["partner"] = partner
                     db_u["users"][partner]["partner"] = uid
                     self.db.write("users", db_u)
+                    
+                    # ذخیره چت فعال
+                    self.save_active_chat(uid, partner)
+                    self.save_active_chat(partner, uid)
 
                     self.bot.send_message(uid, "✅ هم‌صحبت پیدا شد! چت را شروع کنید 💬", 
                                         reply_markup=self.kb_chatting())
@@ -1542,7 +1883,7 @@ class ShadowTitanBot:
                 target_name = db_u["users"].get(target, {}).get("name", "نامشخص")
                 reporter_name = user.get("name", "نامشخص")
                 
-                tehran_time = datetime.datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M")
+                tehran_time = datetime.datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-d %H:%M")
                 
                 report_text = f"🚩 <b>گزارش جدید</b>\n\n"
                 report_text += f"<b>شاکی:</b> 🆔 <code>{uid}</code> - {reporter_name}\n"
@@ -1596,6 +1937,7 @@ class ShadowTitanBot:
                     
                     elif ban_type == "temp":
                         user["admin_temp_ban_target"] = target
+                        user["admin_state"] = "admin_temp_ban_minutes"
                         self.db.write("users", db_u)
                         self.bot.send_message(self.owner, f"⏰ دقیقه بن موقت برای {target}:")
                         self.bot.answer_callback_query(call.id, "وارد کنید")
@@ -1676,7 +2018,7 @@ class ShadowTitanBot:
                 vip_type = call.data.split("_")[2]
                 
                 # بررسی اگر VIP کریسمس است
-                if vip_type == "christmas":
+                if vip_type == "christmas_3month":
                     # VIP رایگان کریسمس
                     christmas_deadline = datetime.datetime(2026, 1, 15)
                     today = datetime.datetime.now()
@@ -1725,22 +2067,70 @@ class ShadowTitanBot:
                     return
                 
                 db_m = self.db.read("missions")
-                new_mission = random.choice(db_m["available"])
+                kb = types.InlineKeyboardMarkup(row_width=1)
                 
-                db_m["daily"] = {
-                    "date": str(datetime.date.today()),
-                    "mission": new_mission["name"],
-                    "reward": new_mission["reward"],
-                    "type": new_mission["type"],
-                    "target": new_mission["target"]
-                }
-                self.db.write("missions", db_m)
+                for i, mission in enumerate(db_m["available"]):
+                    reward_text = ""
+                    if mission.get("reward_type") == "coins":
+                        reward_text = f"{mission.get('reward_value', mission.get('reward', 0)):,} سکه"
+                    elif mission.get("reward_type") == "vip":
+                        duration_name = {
+                            "week": "۱ هفته",
+                            "month": "۱ ماه",
+                            "3month": "۳ ماه",
+                            "6month": "۶ ماه",
+                            "year": "۱ سال"
+                        }.get(mission.get("reward_value", "week"), "VIP")
+                        reward_text = f"VIP {duration_name}"
+                    else:
+                        reward_text = f"{mission.get('reward', 0):,} سکه"
+                    
+                    kb.add(types.InlineKeyboardButton(
+                        f"{i+1}. {mission['name']} - {reward_text}",
+                        callback_data=f"select_mission_{i}"
+                    ))
                 
-                self.bot.answer_callback_query(call.id, "✅ ماموریت تغییر کرد")
-                self.bot.edit_message_text(f"<b>✅ ماموریت جدید:</b>\n\n"
-                                          f"📋 {new_mission['name']}\n"
-                                          f"🎁 پاداش: {new_mission['reward']:,} سکه", 
-                                          call.message.chat.id, call.message.message_id)
+                self.bot.edit_message_text("📋 لطفا ماموریت روزانه جدید را انتخاب کنید:", 
+                                          call.message.chat.id, call.message.message_id, 
+                                          reply_markup=kb)
+                self.bot.answer_callback_query(call.id, "✅")
+
+            elif call.data.startswith("select_mission_"):
+                if uid != self.owner:
+                    return
+                
+                index = int(call.data.split("_")[2])
+                db_m = self.db.read("missions")
+                
+                if index < len(db_m["available"]):
+                    mission = db_m["available"][index]
+                    db_m["daily"] = {
+                        "date": str(datetime.date.today()),
+                        "mission": mission["name"],
+                        "reward_type": mission.get("reward_type", "coins"),
+                        "reward_value": mission.get("reward_value", mission.get("reward", 50)),
+                        "type": mission["type"],
+                        "target": mission["target"]
+                    }
+                    self.db.write("missions", db_m)
+                    
+                    reward_text = ""
+                    if mission.get("reward_type") == "coins":
+                        reward_text = f"{mission.get('reward_value', mission.get('reward', 0)):,} سکه"
+                    elif mission.get("reward_type") == "vip":
+                        duration_name = {
+                            "week": "۱ هفته",
+                            "month": "۱ ماه",
+                            "3month": "۳ ماه",
+                            "6month": "۶ ماه",
+                            "year": "۱ سال"
+                        }.get(mission.get("reward_value", "week"), "VIP")
+                        reward_text = f"VIP {duration_name}"
+                    
+                    self.bot.edit_message_text(f"✅ ماموریت روزانه به '{mission['name']}' تغییر کرد.\n\n"
+                                              f"پاداش: {reward_text}", 
+                                              call.message.chat.id, call.message.message_id)
+                    self.bot.answer_callback_query(call.id, "✅")
 
             elif call.data == "view_missions_list":
                 if uid != self.owner:
@@ -1750,9 +2140,24 @@ class ShadowTitanBot:
                 missions_text = "<b>📋 لیست کامل ماموریت‌ها</b>\n\n"
                 
                 for i, m in enumerate(db_m["available"], 1):
-                    missions_text += f"{i}. {m['name']}\n"
-                    missions_text += f"   🎁 {m['reward']:,} سکه\n"
-                    missions_text += f"   🎯 نوع: {m['type']}\n\n"
+                    missions_text += f"<b>{i}. {m['name']}</b>\n"
+                    
+                    if m.get("reward_type") == "coins":
+                        missions_text += f"   🎁 پاداش: {m.get('reward_value', m.get('reward', 0)):,} سکه\n"
+                    elif m.get("reward_type") == "vip":
+                        duration_name = {
+                            "week": "۱ هفته",
+                            "month": "۱ ماه",
+                            "3month": "۳ ماه",
+                            "6month": "۶ ماه",
+                            "year": "۱ سال"
+                        }.get(m.get("reward_value", "week"), "VIP")
+                        missions_text += f"   🎖 پاداش: VIP {duration_name}\n"
+                    else:
+                        missions_text += f"   🎁 پاداش: {m.get('reward', 0):,} سکه\n"
+                    
+                    missions_text += f"   🎯 نوع: {m['type']}\n"
+                    missions_text += f"   🎯 هدف: {m['target']}\n\n"
                 
                 self.bot.send_message(uid, missions_text)
                 self.bot.answer_callback_query(call.id, "✅ لیست ارسال شد")
@@ -1760,7 +2165,29 @@ class ShadowTitanBot:
             elif call.data == "add_new_mission":
                 if uid != self.owner:
                     return
-                self.bot.answer_callback_query(call.id, "⚠️ این قابلیت به زودی اضافه می‌شود")
+                
+                user["admin_state"] = "add_mission_reward_type"
+                self.db.write("users", db_u)
+                
+                kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                kb.add("🎖 VIP", "💰 سکه", "🔙 بازگشت")
+                
+                self.bot.send_message(uid, "🎯 <b>افزودن ماموریت جدید</b>\n\n"
+                                          "نوع پاداش ماموریت را انتخاب کنید:", 
+                                    reply_markup=kb)
+                self.bot.answer_callback_query(call.id, "✅")
+
+            elif call.data.startswith("extend_ban_"):
+                if uid != self.owner:
+                    return
+                
+                target = call.data.split("_")[2]
+                user["admin_temp_ban_target"] = target
+                user["admin_state"] = "admin_temp_ban_minutes"
+                self.db.write("users", db_u)
+                
+                self.bot.send_message(uid, f"⏰ تعداد دقیقه برای تمدید بن کاربر {target}:")
+                self.bot.answer_callback_query(call.id, "✅")
 
     def run(self):
         """اجرای ربات"""
