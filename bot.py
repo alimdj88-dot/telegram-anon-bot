@@ -43,11 +43,7 @@ class DB:
             "messages": "db_messages.json",
             "config": "db_config.json",
             "missions": "db_missions.json",
-            "chats": "db_chats.json",
-            "logs": "db_logs.json",
-            "tickets": "db_tickets.json",
-            "transactions": "db_transactions.json",
-            "settings": "db_settings.json"
+            "chats": "db_chats.json"
         }
         self.lock = threading.Lock()
         self.init_files()
@@ -83,40 +79,7 @@ class DB:
                     {"name": "بازدید از پروفایل 3 بار", "reward_type": "coins", "reward_value": 40, "type": "profile_views", "target": 3, "description": "بازدید 3 بار از پروفایل خود"}
                 ]
             },
-            "chats": {},
-            "logs": {"admin": [], "system": [], "errors": []},
-            "tickets": {"open": {}, "closed": {}},
-            "transactions": {},
-            "settings": {
-                "vip_prices": {
-                    "week": 500,
-                    "month": 1800,
-                    "3month": 5000,
-                    "6month": 9000,
-                    "year": 15000
-                },
-                "ai_sensitivity": {"toxic": 0.8, "nsfw": 0.8},
-                "filters": {
-                    "bad_words": [
-                        "کیر", "کیرم", "کیرت", "کیری", "کس", "کص", "کوس", "کوث",
-                        "جنده", "جهنده", "مادرجنده", "قحبه", "قهبه",
-                        "پدرسگ", "پدرسوخته", "حرامزاده", "گاییدم", "گاییدن",
-                        "سیکتیر", "کون", "کونی", "گوه", "لاشی", "فاحشه",
-                        "ناموس", "اوبی", "بی‌ناموس", "سکس", "پورن",
-                        "خارکصه", "تخمم", "شاسگول", "پفیوز", "دیوث"
-                    ]
-                },
-                "limits": {
-                    "max_warnings": 3,
-                    "temp_ban_duration": 1440,
-                    "daily_messages": 100
-                },
-                "referral": {
-                    "reward": 100,
-                    "levels": 2,
-                    "level2_reward": 20
-                }
-            }
+            "chats": {}
         }
         with self.lock:
             for key, path in self.files.items():
@@ -141,42 +104,58 @@ class DB:
             except Exception as e:
                 logger.error(f"خطا در نوشتن {key}: {e}")
 
-    def log_admin_action(self, admin_id, action, target=None, details=None):
-        """ثبت لاگ اقدامات ادمین"""
-        db_l = self.read("logs")
-        log_entry = {
-            "admin": admin_id,
-            "action": action,
-            "target": target,
-            "details": details,
-            "timestamp": datetime.datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M:%S")
-        }
-        db_l["admin"].append(log_entry)
-        self.write("logs", db_l)
-
 # ==========================================
 # ربات اصلی
 # ==========================================
 class ShadowTitanBot:
     def __init__(self):
-        self.token = "8213706320:AAEXMsOv6lP-lvgyvaeGawJltv5zxM3bA6A"
+        self.token = "توکن_خودتو_اینجا_قرار_ده"  # 🔴 توکن خودت رو اینجا بذار
         self.owner = "8013245091"
         self.channel = "@ChatNaAnnouncements"
         self.support = "@its_alimo"
         self.hf_token = "Hf_YKgVObJxRxvxIXQWIKOEmGpcZxwehvCKqk"
 
-        self.bot = telebot.TeleBot(self.token, parse_mode="HTML")
+        self.bot = telebot.TeleBot(self.token, parse_mode="HTML", threaded=True)
         self.db = DB()
 
         try:
             self.username = self.bot.get_me().username
-        except:
+            print(f"✅ ربات متصل شد: @{self.username}")
+        except Exception as e:
             self.username = "ShadowTitanBot"
+            print(f"❌ خطا در اتصال: {e}")
             logger.error("خطا در دریافت نام کاربری بات")
 
-        # بارگیری تنظیمات از دیتابیس
-        self.load_settings()
-        
+        # قیمت‌های VIP با سکه
+        self.vip_prices_coins = {
+            "week": 500,
+            "month": 1800,
+            "3month": 5000,
+            "6month": 9000,
+            "year": 15000,
+            "christmas": 0
+        }
+
+        # مدت‌های VIP به ثانیه
+        self.vip_durations = {
+            "week": 7 * 24 * 3600,
+            "month": 30 * 24 * 3600,
+            "3month": 90 * 24 * 3600,
+            "6month": 180 * 24 * 3600,
+            "year": 365 * 24 * 3600,
+            "christmas": 90 * 24 * 3600
+        }
+
+        # لیست فحش
+        self.bad_words = [
+            "کیر", "کیرم", "کیرت", "کیری", "کس", "کص", "کوس", "کوث",
+            "جنده", "جهنده", "مادرجنده", "قحبه", "قهبه",
+            "پدرسگ", "پدرسوخته", "حرامزاده", "گاییدم", "گاییدن",
+            "سیکتیر", "کون", "کونی", "گوه", "لاشی", "فاحشه",
+            "ناموس", "اوبی", "بی‌ناموس", "سکس", "پورن",
+            "خارکصه", "تخمم", "شاسگول", "پفیوز", "دیوث"
+        ]
+
         # متغیرهای هشدار تعمیر
         self.maintenance_warning_active = False
         self.maintenance_warning_event = None
@@ -190,51 +169,7 @@ class ShadowTitanBot:
         
         self.register_handlers()
         logger.info("Shadow Titan v42.0 شروع شد")
-
-    def load_settings(self):
-        """بارگیری تنظیمات از دیتابیس"""
-        settings = self.db.read("settings")
-        self.vip_prices_coins = settings.get("vip_prices", {
-            "week": 500,
-            "month": 1800,
-            "3month": 5000,
-            "6month": 9000,
-            "year": 15000,
-            "christmas": 0
-        })
-        self.bad_words = settings.get("filters", {}).get("bad_words", [])
-        self.ai_sensitivity = settings.get("ai_sensitivity", {"toxic": 0.8, "nsfw": 0.8})
-        self.limits = settings.get("limits", {
-            "max_warnings": 3,
-            "temp_ban_duration": 1440,
-            "daily_messages": 100
-        })
-        self.referral_settings = settings.get("referral", {
-            "reward": 100,
-            "levels": 2,
-            "level2_reward": 20
-        })
-
-        # مدت‌های VIP به ثانیه
-        self.vip_durations = {
-            "week": 7 * 24 * 3600,
-            "month": 30 * 24 * 3600,
-            "3month": 90 * 24 * 3600,
-            "6month": 180 * 24 * 3600,
-            "year": 365 * 24 * 3600,
-            "christmas": 90 * 24 * 3600
-        }
-
-    def save_settings(self):
-        """ذخیره تنظیمات در دیتابیس"""
-        settings = {
-            "vip_prices": self.vip_prices_coins,
-            "filters": {"bad_words": self.bad_words},
-            "ai_sensitivity": self.ai_sensitivity,
-            "limits": self.limits,
-            "referral": self.referral_settings
-        }
-        self.db.write("settings", settings)
+        print("✅ همه هندلرها ثبت شدند")
 
     def restore_active_chats(self):
         """بازیابی چت‌های فعال از دیتابیس"""
@@ -404,9 +339,6 @@ class ShadowTitanBot:
         db_u["users"][uid]["coins"] += amount
         self.db.write("users", db_u)
         
-        # ثبت تراکنش
-        self.log_transaction(uid, "add", amount, reason)
-        
         try:
             self.bot.send_message(uid, f"💰 <b>دریافت سکه!</b>\n\n"
                                        f"مقدار: {amount:,} سکه\n"
@@ -416,39 +348,6 @@ class ShadowTitanBot:
             logger.error(f"خطا در ارسال پیام سکه به {uid}: {e}")
         
         return True
-
-    def deduct_coins(self, uid, amount, reason=""):
-        """کسر سکه"""
-        db_u = self.db.read("users")
-        if uid not in db_u["users"]:
-            return False
-        
-        current_coins = db_u["users"][uid].get("coins", 0)
-        if current_coins < amount:
-            return False
-        
-        db_u["users"][uid]["coins"] = current_coins - amount
-        self.db.write("users", db_u)
-        
-        # ثبت تراکنش
-        self.log_transaction(uid, "deduct", amount, reason)
-        
-        return True
-
-    def log_transaction(self, uid, tx_type, amount, reason=""):
-        """ثبت تراکنش مالی"""
-        db_t = self.db.read("transactions")
-        if uid not in db_t:
-            db_t[uid] = []
-        
-        tx_entry = {
-            "type": tx_type,
-            "amount": amount,
-            "reason": reason,
-            "timestamp": datetime.datetime.now().timestamp()
-        }
-        db_t[uid].append(tx_entry)
-        self.db.write("transactions", db_t)
 
     def check_and_reward_mission(self, uid):
         """بررسی و پاداش ماموریت روزانه"""
@@ -595,7 +494,7 @@ class ShadowTitanBot:
         markup.add("👥 رفرال و دعوت", "🎖 خرید VIP")
         markup.add("❓ راهنما و قوانین", "⚙ تنظیمات")
         if uid == self.owner:
-            markup.add("📊 پنل مدیریت پیشرفته")
+            markup.add("📊 پنل مدیریت")
         return markup
 
     def kb_chatting(self):
@@ -605,47 +504,13 @@ class ShadowTitanBot:
         return markup
 
     def kb_admin(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-        markup.add("📊 آمار کامل", "👥 مدیریت کاربران", "💬 مدیریت چت‌ها")
-        markup.add("📈 آمار و تحلیل", "💰 مدیریت مالی", "🚫 مدیریت بن")
-        markup.add("⚙️ تنظیمات ربات", "🛠️ ابزارهای توسعه", "📋 گزارشات")
-        markup.add("🎯 ماموریت‌ها", "🎫 تیکت‌ها", "🔙 بازگشت به منو")
-        return markup
-
-    def kb_admin_users(self):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("📋 لیست کاربران", "🔍 جستجوی کاربر", "✏️ ویرایش کاربر")
-        markup.add("📊 آمار کاربران", "📈 تاریخچه فعالیت", "🔙 بازگشت")
-        return markup
-
-    def kb_admin_chats(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("💬 چت‌های فعال", "📝 پیام‌های چت", "📋 گزارشات")
-        markup.add("🎫 تیکت‌ها", "🚩 گزارشات تخلف", "🔙 بازگشت")
-        return markup
-
-    def kb_admin_finance(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("💰 تاریخچه تراکنش‌ها", "💸 کسر سکه", "⚙️ تنظیم قیمت‌ها")
-        markup.add("🏷️ کدهای تخفیف", "📊 آمار مالی", "🔙 بازگشت")
-        return markup
-
-    def kb_admin_bans(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("🚫 لیست بن‌ها", "🎯 بن الگوریتمی", "⏱️ بن موقت")
-        markup.add("⚠️ اخطار به کاربر", "🔄 بازیابی حساب", "🔙 بازگشت")
-        return markup
-
-    def kb_admin_settings(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("✏️ متن‌های ربات", "🚫 کلمات فیلتر", "⚙️ حساسیت AI")
-        markup.add("📢 پیام همگانی", "🎛️ قابلیت‌ها", "🔙 بازگشت")
-        return markup
-
-    def kb_admin_tools(self):
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-        markup.add("🧪 تست ربات", "🐛 دیباگ", "📊 مانیتور منابع")
-        markup.add("❌ آمار خطاها", "💾 بکاپ", "🔙 بازگشت")
+        markup.add("📈 آمار کامل", "⚠️ هشدار تعمیر")
+        markup.add("🛠 تعمیر و نگهداری", "🎖 گیفت VIP تکی")
+        markup.add("🎖 گیفت VIP همگانی", "❌ حذف VIP")
+        markup.add("📋 لیست VIP", "💰 اهدای سکه")
+        markup.add("🎯 مدیریت ماموریت‌ها", "📁 دانلود دیتابیس")
+        markup.add("🚫 لیست بن‌شده‌ها", "🔙 بازگشت به منو")
         return markup
 
     def kb_report(self):
@@ -662,7 +527,7 @@ class ShadowTitanBot:
         return markup
 
     def start_maintenance_warning(self, admin_id):
-        """شروع هشدار تعمیر و نگهداری"""
+        """شروع هشدار تعمیر"""
         if self.maintenance_warning_active:
             return
         
@@ -743,10 +608,9 @@ class ShadowTitanBot:
             try:
                 self.bot.send_message(
                     uid,
-                    "📢 <b>اطلاعیه مهم</b>\n\n"
-                    "هشدار تعمیر و نگهداری ربات لغو شد.\n"
-                    "ربات به حالت عادی بازگشته و می‌توانید از آن استفاده کنید.\n\n"
-                    "با تشکر از صبر و شکیبایی شما 🌹"
+                    "📢 <b>اطلاعیه مهم</b" 
+
+                
                 )
             except Exception as e:
                 logger.error(f"خطا در ارسال پیام لغو به {uid}: {e}")
@@ -764,1067 +628,911 @@ class ShadowTitanBot:
         }
         return descriptions.get(mission_type, f"ماموریت {mission_type}")
 
-    # ==========================================
-    # توابع جدید برای مدیریت پیشرفته
-    # ==========================================
-
-    def get_user_stats(self):
-        """گرفتن آمار کامل کاربران"""
-        db_u = self.db.read("users")
-        stats = {
-            "total": len(db_u["users"]),
-            "male": 0,
-            "female": 0,
-            "vip": 0,
-            "active_today": 0,
-            "new_today": 0,
-            "total_coins": 0,
-            "avg_age": 0
-        }
+    def register_handlers(self):
+        """ثبت همه هندلرها"""
+        logger.info("در حال ثبت هندلرها...")
         
-        age_sum = 0
-        age_count = 0
-        today = str(datetime.date.today())
-        
-        for user_data in db_u["users"].values():
-            if user_data.get("sex") == "آقا":
-                stats["male"] += 1
-            elif user_data.get("sex") == "خانم":
-                stats["female"] += 1
-            
-            if self.is_vip(user_data.get("id", "")):
-                stats["vip"] += 1
-            
-            if user_data.get("last_active_date") == today:
-                stats["active_today"] += 1
-            
-            if user_data.get("join_date") == today:
-                stats["new_today"] += 1
-            
-            stats["total_coins"] += user_data.get("coins", 0)
-            
-            if "age" in user_data:
-                age_sum += user_data["age"]
-                age_count += 1
-        
-        if age_count > 0:
-            stats["avg_age"] = age_sum / age_count
-        
-        return stats
-
-    def search_users(self, query):
-        """جستجوی کاربران"""
-        db_u = self.db.read("users")
-        results = []
-        
-        for uid, user_data in db_u["users"].items():
-            name = user_data.get("name", "").lower()
-            if query.lower() in name or query == uid:
-                results.append({
-                    "id": uid,
-                    "name": user_data.get("name", "نامشخص"),
-                    "age": user_data.get("age", "نامشخص"),
-                    "sex": user_data.get("sex", "نامشخص"),
-                    "coins": user_data.get("coins", 0),
-                    "vip": self.is_vip(uid)
-                })
-        
-        return results
-
-    def get_active_chats(self):
-        """دریافت چت‌های فعال"""
-        db_c = self.db.read("chats")
-        db_u = self.db.read("users")
-        active_chats = []
-        
-        for uid, partner in db_c.items():
-            user1 = db_u["users"].get(uid, {})
-            user2 = db_u["users"].get(partner, {})
-            
-            active_chats.append({
-                "user1": {"id": uid, "name": user1.get("name", "نامشخص")},
-                "user2": {"id": partner, "name": user2.get("name", "نامشخص")},
-                "start_time": user1.get("chat_start_time", "نامشخص")
-            })
-        
-        return active_chats
-
-    def create_ticket(self, user_id, category, message):
-        """ایجاد تیکت پشتیبانی"""
-        db_t = self.db.read("tickets")
-        ticket_id = f"T{int(datetime.datetime.now().timestamp())}"
-        
-        ticket = {
-            "id": ticket_id,
-            "user_id": user_id,
-            "category": category,
-            "message": message,
-            "status": "open",
-            "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "responses": []
-        }
-        
-        db_t["open"][ticket_id] = ticket
-        self.db.write("tickets", db_t)
-        
-        return ticket_id
-
-    def reply_ticket(self, ticket_id, responder_id, message):
-        """پاسخ به تیکت"""
-        db_t = self.db.read("tickets")
-        
-        if ticket_id in db_t["open"]:
-            ticket = db_t["open"][ticket_id]
-            response = {
-                "responder_id": responder_id,
-                "message": message,
-                "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-            }
-            ticket["responses"].append(response)
-            self.db.write("tickets", db_t)
-            return True
-        
-        return False
-
-    def close_ticket(self, ticket_id):
-        """بستن تیکت"""
-        db_t = self.db.read("tickets")
-        
-        if ticket_id in db_t["open"]:
-            ticket = db_t["open"][ticket_id]
-            ticket["status"] = "closed"
-            ticket["closed_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-            
-            db_t["closed"][ticket_id] = ticket
-            del db_t["open"][ticket_id]
-            
-            self.db.write("tickets", db_t)
-            return True
-        
-        return False
-
-    def get_user_transactions(self, user_id):
-        """دریافت تاریخچه تراکنش‌های کاربر"""
-        db_t = self.db.read("transactions")
-        return db_t.get(user_id, [])
-
-    def update_vip_prices(self, new_prices):
-        """بروزرسانی قیمت‌های VIP"""
-        for key, value in new_prices.items():
-            if key in self.vip_prices_coins:
-                self.vip_prices_coins[key] = value
-        
-        self.save_settings()
-
-    def add_filter_word(self, word):
-        """اضافه کردن کلمه به فیلتر"""
-        if word not in self.bad_words:
-            self.bad_words.append(word)
-            self.save_settings()
-            return True
-        return False
-
-    def remove_filter_word(self, word):
-        """حذف کلمه از فیلتر"""
-        if word in self.bad_words:
-            self.bad_words.remove(word)
-            self.save_settings()
-            return True
-        return False
-
-    def update_ai_sensitivity(self, toxic=None, nsfw=None):
-        """بروزرسانی حساسیت AI"""
-        if toxic is not None:
-            self.ai_sensitivity["toxic"] = toxic
-        if nsfw is not None:
-            self.ai_sensitivity["nsfw"] = nsfw
-        
-        self.save_settings()
-
-    def send_broadcast(self, message, target="all"):
-        """ارسال پیام همگانی"""
-        db_u = self.db.read("users")
-        sent_count = 0
-        
-        for uid in db_u["users"]:
-            if target == "vip" and not self.is_vip(uid):
-                continue
-            
+        # ========== هندلر دستور /start ==========
+        @self.bot.message_handler(commands=['start'])
+        def handle_start(msg):
             try:
-                self.bot.send_message(uid, message)
-                sent_count += 1
-                time.sleep(0.05)  # جلوگیری از محدودیت تلگرام
+                uid = str(msg.chat.id)
+                logger.info(f"دریافت /start از {uid}")
+                
+                payload = msg.text.split(maxsplit=1)[1] if len(msg.text.split()) > 1 else None
+                db_u = self.db.read("users")
+                db_b = self.db.read("bans")
+                db_c = self.db.read("config")
+                
+                # چک بن دائم
+                if uid in db_b["permanent"]:
+                    reason = db_b["permanent"][uid]
+                    self.bot.send_message(uid, f"🚫 <b>شما بن دائم هستید!</b>\n"
+                                              f"دلیل: {reason}\n"
+                                              f"پشتیبانی: {self.support}")
+                    return
+                
+                # چک بن موقت
+                if uid in db_b["temporary"]:
+                    temp_data = db_b["temporary"][uid]
+                    end = temp_data["end"]
+                    if datetime.datetime.now().timestamp() < end:
+                        rem = int((end - datetime.datetime.now().timestamp()) / 60)
+                        hours = rem // 60
+                        minutes = rem % 60
+                        time_text = ""
+                        if hours > 0:
+                            time_text += f"{hours} ساعت"
+                        if minutes > 0:
+                            if time_text:
+                                time_text += " و "
+                            time_text += f"{minutes} دقیقه"
+                        
+                        self.bot.send_message(uid, f"🚫 <b>بن موقت هستید!</b>\n"
+                                                  f"زمان باقی‌مانده: {time_text}\n"
+                                                  f"پشتیبانی: {self.support}")
+                        return
+                    else:
+                        del db_b["temporary"][uid]
+                        self.db.write("bans", db_b)
+                
+                # چک تعمیر
+                if db_c["settings"]["maintenance"] and not self.is_vip(uid) and uid != self.owner:
+                    self.bot.send_message(uid, "🔧 <b>ربات در حال تعمیر و نگهداری است</b>\n\n"
+                                              f"فقط کاربران VIP دسترسی دارند 🌟\n"
+                                              f"پشتیبانی: {self.support}")
+                    return
+                
+                # رفرال
+                if payload and payload.startswith("ref_"):
+                    referrer_id = payload[4:]
+                    if referrer_id != uid and uid not in db_u["users"]:
+                        if referrer_id in db_u["users"]:
+                            db_u["users"][referrer_id]["total_referrals"] = db_u["users"][referrer_id].get("total_referrals", 0) + 1
+                            db_u["users"][referrer_id]["referral_list"] = db_u["users"][referrer_id].get("referral_list", [])
+                            db_u["users"][referrer_id]["referral_list"].append(uid)
+                            self.db.write("users", db_u)
+                            
+                            self.add_coins(referrer_id, 100, f"دعوت کاربر جدید")
+                            try:
+                                self.bot.send_message(referrer_id, "🎉 یک کاربر جدید از لینک شما عضو شد!\n"
+                                                                  "💰 +100 سکه پاداش دریافت کردید")
+                            except:
+                                pass
+                
+                # لینک ناشناس
+                if payload and payload.startswith("msg_"):
+                    target = payload[4:]
+                    if target == uid:
+                        self.bot.send_message(uid, "❌ نمی‌توانید به خودتان پیام بفرستید 😊")
+                        return
+                    
+                    if uid not in db_u["users"]:
+                        db_u["users"][uid] = {
+                            "state": "name",
+                            "vip_end": 0,
+                            "warns": 0,
+                            "blocks": [],
+                            "coins": 0,
+                            "total_referrals": 0,
+                            "referral_list": [],
+                            "daily_chat_count": 0,
+                            "daily_unique_chats": [],
+                            "daily_spin_done": False,
+                            "daily_profile_views": 0,
+                            "mission_completed_date": "",
+                            "last_spin": "",
+                            "christmas_vip_taken": False,
+                            "had_temp_ban": False,
+                            "anon_target": target
+                        }
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "✨ برای ارسال پیام ناشناس، ابتدا نام مستعار وارد کنید:")
+                    else:
+                        db_u["users"][uid]["state"] = "anon_send"
+                        db_u["users"][uid]["anon_target"] = target
+                        self.db.write("users", db_u)
+                        self.bot.send_message(uid, "📝 پیام ناشناس خود را بنویسید:")
+                    return
+                
+                # ثبت‌نام عادی
+                if uid not in db_u["users"]:
+                    db_u["users"][uid] = {
+                        "state": "name",
+                        "vip_end": 0,
+                        "warns": 0,
+                        "blocks": [],
+                        "coins": 0,
+                        "total_referrals": 0,
+                        "referral_list": [],
+                        "daily_chat_count": 0,
+                        "daily_unique_chats": [],
+                        "daily_spin_done": False,
+                        "daily_profile_views": 0,
+                        "mission_completed_date": "",
+                        "last_spin": "",
+                        "christmas_vip_taken": False,
+                        "had_temp_ban": False
+                    }
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "🌟 <b>به Shadow Titan خوش آمدید!</b>\n\n"
+                                              "لطفاً نام مستعار خود را وارد کنید:")
+                else:
+                    self.bot.send_message(uid, "خوش برگشتید عزیز 🌹", reply_markup=self.kb_main(uid))
+                    
             except Exception as e:
-                logger.error(f"خطا در ارسال پیام همگانی به {uid}: {e}")
+                logger.error(f"خطا در هندلر start: {e}")
+                try:
+                    self.bot.send_message(msg.chat.id, "❌ خطایی رخ داد. لطفاً دوباره تلاش کنید.")
+                except:
+                    pass
         
-        return sent_count
-
-    def get_system_stats(self):
-        """دریافت آمار سیستم"""
-        import psutil
-        import os
+        # ========== هندلر اصلی برای همه پیام‌ها ==========
+        @self.bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'video', 'voice', 'sticker', 'animation', 'video_note'])
+        def handle_all_messages(msg):
+            try:
+                uid = str(msg.chat.id)
+                logger.info(f"دریافت پیام از {uid} - نوع: {msg.content_type}")
+                
+                # پردازش پیام
+                self.process_message(msg)
+                
+            except Exception as e:
+                logger.error(f"خطا در هندلر اصلی: {e}")
         
-        stats = {
-            "cpu_percent": psutil.cpu_percent(),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_percent": psutil.disk_usage('/').percent,
-            "process_memory": psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024,  # MB
-            "active_threads": threading.active_count(),
-            "db_size": {}
-        }
+        # ========== هندلر کال‌بک‌ها ==========
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def handle_callback_query(call):
+            try:
+                uid = str(call.from_user.id)
+                logger.info(f"دریافت کال‌بک از {uid}: {call.data}")
+                
+                # پردازش کال‌بک
+                self.process_callback(call)
+                
+            except Exception as e:
+                logger.error(f"خطا در هندلر کال‌بک: {e}")
+                try:
+                    self.bot.answer_callback_query(call.id, "❌ خطایی رخ داد")
+                except:
+                    pass
         
-        # محاسبه حجم دیتابیس
-        for key, path in self.db.files.items():
-            if os.path.exists(path):
-                stats["db_size"][key] = os.path.getsize(path) / 1024  # KB
-        
-        return stats
-
-    def backup_database(self):
-        """ایجاد بکاپ از دیتابیس"""
-        backup_dir = "backups"
-        if not os.path.exists(backup_dir):
-            os.makedirs(backup_dir)
-        
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = os.path.join(backup_dir, f"backup_{timestamp}.zip")
-        
-        import zipfile
-        with zipfile.ZipFile(backup_file, 'w') as zipf:
-            for key, path in self.db.files.items():
-                if os.path.exists(path):
-                    zipf.write(path, os.path.basename(path))
-        
-        return backup_file
-
-    def algorithmic_ban(self):
-        """بن الگوریتمی بر اساس رفتار"""
+        logger.info("✅ همه هندلرها ثبت شدند")
+    
+    def process_message(self, msg):
+        """پردازش پیام دریافتی"""
+        uid = str(msg.chat.id)
         db_u = self.db.read("users")
         db_b = self.db.read("bans")
+        db_c = self.db.read("config")
         
-        for uid, user_data in db_u["users"].items():
-            # بررسی الگوهای مشکوک
-            warns = user_data.get("warns", 0)
-            reports = user_data.get("reports_received", 0)
-            chat_count = user_data.get("daily_chat_count", 0)
-            
-            # اگر کاربر بیش از 10 گزارش دریافت کرده
-            if reports >= 10:
-                self.ban_perm(uid, "گزارش‌های زیاد از کاربران مختلف")
-                self.db.log_admin_action("system", "algorithmic_ban", uid, f"reports={reports}")
-            
-            # اگر کاربر در یک روز بیش از 500 پیام فرستاده (اسپم)
-            elif chat_count > 500:
-                self.ban_temp(uid, 720, "ارسال پیام‌های زیاد (اسپم)")
-                self.db.log_admin_action("system", "algorithmic_temp_ban", uid, f"chat_count={chat_count}")
-
-    def check_suspicious_activity(self):
-        """بررسی فعالیت مشکوک"""
-        db_u = self.db.read("users")
-        suspicious = []
+        # چک بن
+        if uid in db_b["permanent"]:
+            return
+        if uid in db_b["temporary"] and datetime.datetime.now().timestamp() < db_b["temporary"][uid]["end"]:
+            return
         
-        for uid, user_data in db_u["users"].items():
-            # فعالیت در ساعت‌های غیرعادی (3-6 صبح)
-            last_active = user_data.get("last_active_time", "")
-            if "03:00" <= last_active <= "06:00":
-                suspicious.append({
-                    "user": uid,
-                    "reason": "فعالیت در ساعت غیرعادی",
-                    "last_active": last_active
-                })
+        # چک تعمیر
+        if db_c["settings"]["maintenance"] and not self.is_vip(uid) and uid != self.owner:
+            return
         
-        return suspicious
-
-    def get_referral_tree(self, user_id):
-        """دریافت درخت دعوت کاربر"""
-        db_u = self.db.read("users")
-        user = db_u["users"].get(user_id, {})
-        referrals = user.get("referral_list", [])
+        user = db_u["users"].get(uid)
+        if not user:
+            return
         
-        tree = {
-            "user": user_id,
-            "direct": [],
-            "level2": []
-        }
-        
-        for ref_id in referrals:
-            tree["direct"].append(ref_id)
-            ref_user = db_u["users"].get(ref_id, {})
-            ref_referrals = ref_user.get("referral_list", [])
-            tree["level2"].extend(ref_referrals)
-        
-        return tree
-
-    def update_bot_texts(self, text_type, new_text):
-        """بروزرسانی متن‌های ربات"""
-        # در اینجا می‌توانید متن‌های مختلف ربات را بروزرسانی کنید
-        # برای سادگی، فعلاً فقط لاگ می‌کنیم
-        logger.info(f"متن {text_type} به {new_text[:50]}... بروزرسانی شد")
-        return True
-
-    def toggle_feature(self, feature, enable=True):
-        """فعال/غیرفعال کردن قابلیت"""
-        features = {
-            "chat": "چت ناشناس",
-            "anon_messages": "پیام ناشناس",
-            "wheel": "گردونه شانس",
-            "missions": "ماموریت روزانه",
-            "referral": "سیستم رفرال"
-        }
-        
-        if feature in features:
-            status = "فعال" if enable else "غیرفعال"
-            logger.info(f"قابلیت {features[feature]} {status} شد")
-            return True
-        
-        return False
-
-    def run_diagnostic(self):
-        """اجرای تشخیص مشکلات"""
-        issues = []
-        
-        # بررسی اتصال به تلگرام
-        try:
-            self.bot.get_me()
-        except Exception as e:
-            issues.append(f"❌ مشکل در اتصال به تلگرام: {str(e)}")
-        
-        # بررسی فایل‌های دیتابیس
-        for key, path in self.db.files.items():
-            if not os.path.exists(path):
-                issues.append(f"❌ فایل دیتابیس {key} یافت نشد")
-        
-        # بررسی حافظه
-        import psutil
-        memory = psutil.virtual_memory()
-        if memory.percent > 90:
-            issues.append(f"⚠️ مصرف حافظه بالا: {memory.percent}%")
-        
-        # بررسی تعداد خطاها در لاگ
-        if os.path.exists('shadow_titan.log'):
-            with open('shadow_titan.log', 'r') as f:
-                lines = f.readlines()
-                error_count = sum(1 for line in lines if 'ERROR' in line)
-                if error_count > 100:
-                    issues.append(f"⚠️ تعداد خطاهای زیاد در لاگ: {error_count}")
-        
-        return issues
-
-    def register_handlers(self):
-        # تمام هندلرهای قبلی به همان صورت باقی می‌مانند
-        # فقط هندلرهای جدید برای پنل مدیریت اضافه می‌شوند
-        
-        @self.bot.message_handler(func=lambda msg: msg.text == "📊 پنل مدیریت پیشرفته" and str(msg.chat.id) == self.owner)
-        def admin_panel(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>📊 پنل مدیریت پیشرفته Shadow Titan</b>\n\n"
-                                      "لطفاً بخش مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "👥 مدیریت کاربران" and str(msg.chat.id) == self.owner)
-        def admin_users(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>👥 مدیریت کاربران</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_users())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "📋 لیست کاربران" and str(msg.chat.id) == self.owner)
-        def list_users(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(
-                types.InlineKeyboardButton("🎖 فقط VIP", callback_data="list_vip"),
-                types.InlineKeyboardButton("👦 فقط آقا", callback_data="list_male")
-            )
-            kb.add(
-                types.InlineKeyboardButton("👧 فقط خانم", callback_data="list_female"),
-                types.InlineKeyboardButton("📊 همه", callback_data="list_all")
-            )
-            
-            stats = self.get_user_stats()
-            stats_text = f"<b>📊 آمار کاربران</b>\n\n"
-            stats_text += f"👥 کل کاربران: {stats['total']:,}\n"
-            stats_text += f"👦 آقا: {stats['male']:,}\n"
-            stats_text += f"👧 خانم: {stats['female']:,}\n"
-            stats_text += f"🎖 VIP: {stats['vip']:,}\n"
-            stats_text += f"🟢 فعال امروز: {stats['active_today']:,}\n"
-            stats_text += f"🆕 جدید امروز: {stats['new_today']:,}\n"
-            stats_text += f"💰 کل سکه‌ها: {stats['total_coins']:,}\n"
-            stats_text += f"📊 میانگین سن: {stats['avg_age']:.1f}\n\n"
-            stats_text += "برای مشاهده لیست فیلترشده کلیک کنید:"
-            
-            self.bot.send_message(uid, stats_text, reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "🔍 جستجوی کاربر" and str(msg.chat.id) == self.owner)
-        def search_user(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "search_user"
+        # ریست روزانه
+        today = str(datetime.date.today())
+        if user.get("last_active_date") != today:
+            user["daily_chat_count"] = 0
+            user["daily_unique_chats"] = []
+            user["daily_spin_done"] = False
+            user["daily_profile_views"] = 0
+            user["last_active_date"] = today
             self.db.write("users", db_u)
-            self.bot.send_message(uid, "🔍 آیدی یا نام کاربر را وارد کنید:")
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "💬 مدیریت چت‌ها" and str(msg.chat.id) == self.owner)
-        def admin_chats(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>💬 مدیریت چت‌ها و گزارشات</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_chats())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "💬 چت‌های فعال" and str(msg.chat.id) == self.owner)
-        def active_chats_list(msg):
-            uid = str(msg.chat.id)
-            active_chats = self.get_active_chats()
+        
+        # پردازش state کاربر
+        if user.get("state") == "name":
+            if msg.content_type != "text":
+                self.bot.send_message(uid, "❌ لطفاً فقط متن وارد کنید")
+                return
+            if self.contains_bad(msg.text):
+                self.bot.send_message(uid, "❌ نام شامل کلمات نامناسب است")
+                return
+            user["name"] = msg.text[:20]
+            user["state"] = "sex"
+            self.db.write("users", db_u)
             
-            if not active_chats:
-                self.bot.send_message(uid, "❌ هیچ چت فعالی وجود ندارد.")
+            kb = types.InlineKeyboardMarkup()
+            kb.add(
+                types.InlineKeyboardButton("آقا 👦", callback_data="sex_m"),
+                types.InlineKeyboardButton("خانم 👧", callback_data="sex_f")
+            )
+            self.bot.send_message(uid, f"سلام {user['name']} 🌸\n\n"
+                                      "جنسیت خود را انتخاب کنید:", reply_markup=kb)
+            return
+        
+        elif user.get("state") == "age":
+            if msg.content_type != "text" or not msg.text.isdigit():
+                self.bot.send_message(uid, "❌ لطفاً فقط عدد وارد کنید")
+                return
+            age = int(msg.text)
+            if not 12 <= age <= 99:
+                self.bot.send_message(uid, "❌ سن باید بین ۱۲ تا ۹۹ باشد")
                 return
             
-            text = "<b>💬 چت‌های فعال</b>\n\n"
-            for i, chat in enumerate(active_chats[:20], 1):
-                text += f"{i}. {chat['user1']['name']} ↔️ {chat['user2']['name']}\n"
-                text += f"   🆔: {chat['user1']['id']} ↔️ {chat['user2']['id']}\n"
-                text += f"   ⏰ شروع: {chat.get('start_time', 'نامشخص')}\n\n"
+            user["age"] = age
+            user["state"] = "idle"
+            self.db.write("users", db_u)
             
-            if len(active_chats) > 20:
-                text += f"\n... و {len(active_chats) - 20} چت فعال دیگر"
+            self.add_coins(uid, 50, "پاداش ثبت‌نام")
             
-            self.bot.send_message(uid, text)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "📈 آمار و تحلیل" and str(msg.chat.id) == self.owner)
-        def admin_analytics(msg):
-            uid = str(msg.chat.id)
+            self.bot.send_message(uid, "✅ <b>ثبت‌نام با موفقیت انجام شد!</b>\n\n"
+                                      "🎁 پاداش ثبت‌نام: 50 سکه\n\n"
+                                      "حالا از ربات لذت ببرید!", 
+                                  reply_markup=self.kb_main(uid))
+            return
+        
+        elif user.get("state") == "anon_send":
+            if msg.content_type != "text":
+                self.bot.send_message(uid, "❌ فقط متن مجاز است")
+                return
             
-            # آمار 7 روز اخیر
-            import matplotlib.pyplot as plt
-            import io
+            target = user.get("anon_target")
+            if not target:
+                self.bot.send_message(uid, "❌ خطا در ارسال پیام")
+                return
             
-            days = []
-            new_users = []
-            active_users = []
+            db_m = self.db.read("messages")
+            if target not in db_m["inbox"]:
+                db_m["inbox"][target] = []
             
-            for i in range(7):
-                day = (datetime.datetime.now() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-                days.append(day)
-                
-                # محاسبه کاربران جدید و فعال برای هر روز
-                db_u = self.db.read("users")
-                new = sum(1 for u in db_u["users"].values() if u.get("join_date") == day)
-                active = sum(1 for u in db_u["users"].values() if u.get("last_active_date") == day)
-                
-                new_users.append(new)
-                active_users.append(active)
+            db_m["inbox"][target].append({
+                "text": msg.text,
+                "from": uid,
+                "seen": False,
+                "time": datetime.datetime.now().strftime("%H:%M %d/%m")
+            })
+            self.db.write("messages", db_m)
             
-            # ایجاد نمودار
-            plt.figure(figsize=(10, 5))
-            plt.plot(days[::-1], new_users[::-1], label='کاربران جدید', marker='o')
-            plt.plot(days[::-1], active_users[::-1], label='کاربران فعال', marker='s')
-            plt.xlabel('تاریخ')
-            plt.ylabel('تعداد')
-            plt.title('رشد کاربران در 7 روز اخیر')
-            plt.legend()
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            
-            # ذخیره نمودار در بافر
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-            
-            # ارسال نمودار
-            stats_text = "<b>📈 آمار و تحلیل پیشرفته</b>\n\n"
-            stats_text += f"📊 کاربران جدید امروز: {new_users[0]}\n"
-            stats_text += f"🟢 کاربران فعال امروز: {active_users[0]}\n"
-            stats_text += f"📈 میانگین رشد روزانه: {sum(new_users)/7:.1f}\n\n"
-            stats_text += "نمودار رشد 7 روز اخیر:"
-            
-            self.bot.send_photo(uid, buf, caption=stats_text)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "💰 مدیریت مالی" and str(msg.chat.id) == self.owner)
-        def admin_finance(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>💰 مدیریت مالی و سکه‌ها</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_finance())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "🚫 مدیریت بن" and str(msg.chat.id) == self.owner)
-        def admin_bans(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>🚫 سیستم مدیریت بن پیشرفته</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_bans())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "⚙️ تنظیمات ربات" and str(msg.chat.id) == self.owner)
-        def admin_settings(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>⚙️ تنظیمات پیشرفته ربات</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_settings())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "🛠️ ابزارهای توسعه" and str(msg.chat.id) == self.owner)
-        def admin_tools(msg):
-            uid = str(msg.chat.id)
-            self.bot.send_message(uid, "<b>🛠️ ابزارهای توسعه و دیباگ</b>\n\n"
-                                      "عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=self.kb_admin_tools())
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "📋 گزارشات" and str(msg.chat.id) == self.owner)
-        def admin_reports(msg):
-            uid = str(msg.chat.id)
-            
-            # خواندن لاگ‌ها
-            db_l = self.db.read("logs")
-            admin_logs = db_l.get("admin", [])
-            system_logs = db_l.get("system", [])
-            error_logs = db_l.get("errors", [])
-            
-            text = "<b>📋 گزارشات و لاگ سیستم</b>\n\n"
-            text += f"📝 اقدامات ادمین: {len(admin_logs)} مورد\n"
-            text += f"🤖 لاگ سیستم: {len(system_logs)} مورد\n"
-            text += f"❌ خطاها: {len(error_logs)} مورد\n\n"
-            
-            # آخرین 5 اقدام ادمین
-            text += "<b>آخرین اقدامات ادمین:</b>\n"
-            for log in admin_logs[-5:]:
-                text += f"• {log.get('action', 'نامشخص')} - {log.get('timestamp', 'نامشخص')}\n"
-            
-            # آمار سیستم
-            system_stats = self.get_system_stats()
-            text += f"\n<b>آمار سیستم:</b>\n"
-            text += f"💾 CPU: {system_stats['cpu_percent']}%\n"
-            text += f"🧠 حافظه: {system_stats['memory_percent']}%\n"
-            text += f"💿 دیسک: {system_stats['disk_percent']}%\n"
-            text += f"📊 حافظه فرآیند: {system_stats['process_memory']:.1f} MB\n"
-            
-            kb = types.InlineKeyboardMarkup()
-            kb.add(
-                types.InlineKeyboardButton("📥 دانلود لاگ‌ها", callback_data="download_logs"),
-                types.InlineKeyboardButton("🗑️ پاکسازی لاگ‌ها", callback_data="clear_logs")
-            )
-            
-            self.bot.send_message(uid, text, reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "🎫 تیکت‌ها" and str(msg.chat.id) == self.owner)
-        def admin_tickets(msg):
-            uid = str(msg.chat.id)
-            db_t = self.db.read("tickets")
-            
-            open_tickets = db_t.get("open", {})
-            closed_tickets = db_t.get("closed", {})
-            
-            text = "<b>🎫 سیستم تیکت پشتیبانی</b>\n\n"
-            text += f"📨 تیکت‌های باز: {len(open_tickets)}\n"
-            text += f"✅ تیکت‌های بسته: {len(closed_tickets)}\n\n"
-            
-            if open_tickets:
-                text += "<b>تیکت‌های باز:</b>\n"
-                for ticket_id, ticket in list(open_tickets.items())[:5]:
-                    text += f"• #{ticket_id} - {ticket.get('category', 'عمومی')}\n"
-                    text += f"  👤 کاربر: {ticket.get('user_id', 'نامشخص')}\n"
-                    text += f"  ⏰ زمان: {ticket.get('created_at', 'نامشخص')}\n\n"
-            
-            kb = types.InlineKeyboardMarkup()
-            kb.add(
-                types.InlineKeyboardButton("📋 مشاهده تیکت‌ها", callback_data="view_tickets"),
-                types.InlineKeyboardButton("📊 آمار تیکت‌ها", callback_data="ticket_stats")
-            )
-            
-            self.bot.send_message(uid, text, reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "💾 بکاپ" and str(msg.chat.id) == self.owner)
-        def backup_db(msg):
-            uid = str(msg.chat.id)
-            
+            self.bot.send_message(uid, "✅ پیام ناشناس با موفقیت ارسال شد")
             try:
-                backup_file = self.backup_database()
-                file_size = os.path.getsize(backup_file) / 1024  # KB
+                self.bot.send_message(target, "📩 یک پیام ناشناس جدید دریافت کردید!")
+            except:
+                pass
+            
+            user["state"] = "idle"
+            self.db.write("users", db_u)
+            return
+        
+        elif user.get("state") == "anon_reply":
+            if msg.content_type != "text":
+                self.bot.send_message(uid, "❌ فقط متن مجاز است")
+                return
+            
+            target = user.get("anon_reply_target")
+            if target:
+                try:
+                    self.bot.send_message(target, f"📩 <b>پاسخ ناشناس:</b>\n\n{msg.text}")
+                    self.bot.send_message(uid, "✅ پاسخ ارسال شد")
+                except:
+                    self.bot.send_message(uid, "❌ خطا در ارسال پاسخ")
+            
+            user["state"] = "idle"
+            self.db.write("users", db_u)
+            return
+        
+        # تغییرات پروفایل
+        if user.get("state") == "change_name":
+            if msg.content_type != "text":
+                self.bot.send_message(uid, "❌ فقط متن مجاز است")
+                return
+            if self.contains_bad(msg.text):
+                self.bot.send_message(uid, "❌ نام شامل کلمات نامناسب است")
+                return
+            user["name"] = msg.text[:20]
+            user["state"] = "idle"
+            self.db.write("users", db_u)
+            self.bot.send_message(uid, "✅ نام با موفقیت تغییر کرد", reply_markup=self.kb_main(uid))
+            return
+        
+        if user.get("state") == "change_age":
+            if msg.content_type != "text" or not msg.text.isdigit():
+                self.bot.send_message(uid, "❌ فقط عدد وارد کنید")
+                return
+            age = int(msg.text)
+            if not 12 <= age <= 99:
+                self.bot.send_message(uid, "❌ سن باید بین ۱۲ تا ۹۹ باشد")
+                return
+            user["age"] = age
+            user["state"] = "idle"
+            self.db.write("users", db_u)
+            self.bot.send_message(uid, "✅ سن با موفقیت تغییر کرد", reply_markup=self.kb_main(uid))
+            return
+        
+        # چت فعال
+        if user.get("partner"):
+            partner = user["partner"]
+            
+            if msg.text == "🔚 پایان گفتگو":
+                kb = types.InlineKeyboardMarkup()
+                kb.add(
+                    types.InlineKeyboardButton("✅ بله، پایان بده", callback_data="end_yes"),
+                    types.InlineKeyboardButton("❌ خیر، ادامه بده", callback_data="end_no")
+                )
+                self.bot.send_message(uid, "❓ آیا مطمئن هستید که می‌خواهید چت را پایان دهید؟", 
+                                    reply_markup=kb)
+                return
+            
+            if msg.text == "🚩 گزارش تخلف":
+                user["report_target"] = partner
+                user["report_last_msg_id"] = msg.message_id
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "⚠️ دلیل گزارش را انتخاب کنید:", 
+                                    reply_markup=self.kb_report())
+                return
+            
+            if msg.text == "🚫 بلاک و خروج":
+                blocks = user.get("blocks", [])
+                if partner not in blocks:
+                    blocks.append(partner)
+                user["blocks"] = blocks
+                self.db.write("users", db_u)
+                self.end_chat(uid, partner, "شما را بلاک کرد")
+                return
+            
+            if msg.text == "👥 درخواست آیدی":
+                kb = types.InlineKeyboardMarkup()
+                kb.add(
+                    types.InlineKeyboardButton("✅ بله", callback_data=f"id_share_yes_{uid}"),
+                    types.InlineKeyboardButton("❌ خیر", callback_data="id_share_no")
+                )
+                self.bot.send_message(partner, "📢 هم‌صحبت شما درخواست آیدی دارد. موافقید؟", 
+                                    reply_markup=kb)
+                self.bot.send_message(uid, "⏳ درخواست ارسال شد، منتظر تایید باشید")
+                return
+            
+            # فیلتر فحش + AI
+            if msg.content_type == "text" and msg.text:
+                is_bad = self.contains_bad(msg.text)
+                toxic_score = self.ai_toxic_scan(msg.text)
+                nsfw_score = self.ai_nsfw_scan(msg.text)
                 
-                with open(backup_file, 'rb') as f:
-                    self.bot.send_document(uid, f, caption=f"✅ <b>بکاپ موفقیت‌آمیز بود</b>\n\n"
-                                                        f"📁 فایل: {os.path.basename(backup_file)}\n"
-                                                        f"📊 حجم: {file_size:.1f} KB\n"
-                                                        f"⏰ زمان: {datetime.datetime.now().strftime('%H:%M')}")
+                if is_bad or toxic_score > 0.8 or nsfw_score > 0.8:
+                    try:
+                        self.bot.delete_message(uid, msg.message_id)
+                    except:
+                        pass
+                    
+                    user["warns"] = user.get("warns", 0) + 1
+                    self.db.write("users", db_u)
+
+                    if user["warns"] >= 3:
+                        if user.get("had_temp_ban", False):
+                            self.ban_perm(uid, "فحاشی مکرر پس از بن موقت")
+                            self.report_auto_ban(uid, "فحاشی مکرر پس از بن موقت", "بن دائم")
+                            self.end_chat(uid, partner, "به دلیل تخلف بن دائم شد")
+                        else:
+                            self.ban_temp(uid, 1440, "فحاشی مکرر (بن ۲۴ ساعته)")
+                            user["had_temp_ban"] = True
+                            user["warns"] = 0
+                            self.db.write("users", db_u)
+                            self.report_auto_ban(uid, "فحاشی مکرر (اولین بار)", "بن ۲۴ ساعته")
+                            self.end_chat(uid, partner, "به دلیل تخلف بن موقت شد")
+                    else:
+                        self.bot.send_message(uid, f"⚠️ <b>اخطار {user['warns']}/3</b>\n\n"
+                                                  "محتوای نامناسب ممنوع است!")
+                    return
+            
+            # شمارش پیام برای ماموریت
+            user["daily_chat_count"] = user.get("daily_chat_count", 0) + 1
+            if partner not in user.get("daily_unique_chats", []):
+                unique_chats = user.get("daily_unique_chats", [])
+                unique_chats.append(partner)
+                user["daily_unique_chats"] = unique_chats
+            self.db.write("users", db_u)
+
+            # بررسی ماموریت
+            self.check_and_reward_mission(uid)
+
+            # ارسال پیام
+            try:
+                self.bot.copy_message(partner, uid, msg.message_id)
             except Exception as e:
-                self.bot.send_message(uid, f"❌ خطا در ایجاد بکاپ: {str(e)}")
+                logger.error(f"خطا در ارسال پیام چت: {e}")
+            return
+        
+        # لغو جستجو
+        if msg.text == "❌ لغو جستجو":
+            db_q = self.db.read("queue")
+            if uid in db_q.get("general", []):
+                db_q["general"].remove(uid)
+                self.db.write("queue", db_q)
+            self.bot.send_message(uid, "✅ جستجو با موفقیت لغو شد", reply_markup=self.kb_main(uid))
+            return
+        
+        # منوی اصلی
+        if not msg.text:
+            return
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "🧪 تست ربات" and str(msg.chat.id) == self.owner)
-        def test_bot(msg):
-            uid = str(msg.chat.id)
+        text = msg.text
+
+        if text == "🛰 شروع چت ناشناس":
+            kb = types.InlineKeyboardMarkup(row_width=3)
+            kb.add(
+                types.InlineKeyboardButton("آقا 👦", callback_data="find_m"),
+                types.InlineKeyboardButton("خانم 👧", callback_data="find_f"),
+                types.InlineKeyboardButton("هرکی 🌈", callback_data="find_any")
+            )
+            self.bot.send_message(uid, "🔍 دنبال چه کسی می‌گردید؟", reply_markup=kb)
+
+        elif text == "👤 پروفایل من":
+            # بارگیری دیتابیس تازه
+            db_u = self.db.read("users")
+            user = db_u["users"].get(uid)
             
-            issues = self.run_diagnostic()
+            if not user:
+                return
             
-            if not issues:
-                self.bot.send_message(uid, "✅ <b>همه چیز خوب است!</b>\n\n"
-                                          "هیچ مشکلی در سیستم تشخیص داده نشد.")
+            # شمارش برای ماموریت
+            user["daily_profile_views"] = user.get("daily_profile_views", 0) + 1
+            self.db.write("users", db_u)
+            
+            rank = "🎖 VIP" if self.is_vip(uid) else "⭐ عادی"
+            vip_end = user.get("vip_end", 0)
+            
+            if vip_end > 0:
+                vip_status = f"تا {datetime.datetime.fromtimestamp(vip_end).strftime('%Y-%m-%d')}"
+                
+                # محاسبه مدت باقی‌مانده
+                now = datetime.datetime.now().timestamp()
+                remaining_days = int((vip_end - now) / (24 * 3600))
+                if remaining_days > 0:
+                    vip_status += f" ({remaining_days} روز)"
             else:
-                text = "⚠️ <b>مشکلات تشخیص داده شده:</b>\n\n"
-                for i, issue in enumerate(issues, 1):
-                    text += f"{i}. {issue}\n"
-                
-                kb = types.InlineKeyboardMarkup()
-                kb.add(
-                    types.InlineKeyboardButton("🔧 رفع مشکلات", callback_data="fix_issues"),
-                    types.InlineKeyboardButton("📊 گزارش کامل", callback_data="full_report")
-                )
-                
-                self.bot.send_message(uid, text, reply_markup=kb)
+                vip_status = "ندارید"
+            
+            # اطمینان از وجود coins
+            coins = user.get("coins", 0)
+            
+            profile_text = f"<b>👤 پروفایل شما</b>\n\n"
+            profile_text += f"نام: {user.get('name', 'نامشخص')}\n"
+            profile_text += f"جنسیت: {user.get('sex', 'نامشخص')}\n"
+            profile_text += f"سن: {user.get('age', 'نامشخص')}\n"
+            profile_text += f"رنک: {rank}\n"
+            profile_text += f"VIP: {vip_status}\n"
+            profile_text += f"💰 سکه: {coins:,}\n"
+            profile_text += f"👥 رفرال: {user.get('total_referrals', 0)} نفر\n"
+            profile_text += f"⚠️ اخطار: {user.get('warns', 0)}/3\n"
+            
+            # نمایش وضعیت VIP کریسمس
+            if user.get("christmas_vip_taken", False):
+                profile_text += f"🎄 VIP کریسمس: <b>دریافت شده ✅</b>"
+            
+            self.bot.send_message(uid, profile_text)
+            
+            # بررسی ماموریت
+            self.check_and_reward_mission(uid)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "📊 مانیتور منابع" and str(msg.chat.id) == self.owner)
-        def monitor_resources(msg):
-            uid = str(msg.chat.id)
-            
-            stats = self.get_system_stats()
-            
-            text = "<b>📊 مانیتور منابع سیستم</b>\n\n"
-            text += f"💾 مصرف CPU: {stats['cpu_percent']}%\n"
-            text += f"🧠 مصرف حافظه: {stats['memory_percent']}%\n"
-            text += f"💿 مصرف دیسک: {stats['disk_percent']}%\n"
-            text += f"📊 حافظه فرآیند: {stats['process_memory']:.1f} MB\n"
-            text += f"🧵 تردهای فعال: {stats['active_threads']}\n\n"
-            
-            text += "<b>حجم دیتابیس‌ها:</b>\n"
-            for db_name, size in stats['db_size'].items():
-                text += f"• {db_name}: {size:.1f} KB\n"
-            
-            # ایجاد نمودار مصرف منابع
-            import matplotlib.pyplot as plt
-            import io
-            
-            labels = ['CPU', 'Memory', 'Disk']
-            values = [stats['cpu_percent'], stats['memory_percent'], stats['disk_percent']]
-            
-            plt.figure(figsize=(8, 4))
-            bars = plt.bar(labels, values, color=['#FF6B6B', '#4ECDC4', '#45B7D1'])
-            plt.ylim(0, 100)
-            plt.ylabel('درصد مصرف')
-            plt.title('مصرف منابع سیستم')
-            
-            # اضافه کردن مقادیر روی نمودار
-            for bar, value in zip(bars, values):
-                plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
-                        f'{value}%', ha='center', va='bottom')
-            
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-            
-            self.bot.send_photo(uid, buf, caption=text)
+        elif text == "📩 لینک ناشناس من":
+            link = f"https://t.me/{self.username}?start=msg_{uid}"
+            self.bot.send_message(uid, f"<b>📩 لینک ناشناس شما</b>\n\n"
+                                      f"<code>{link}</code>\n\n"
+                                      "با اشتراک این لینک، دیگران می‌توانند ناشناس به شما پیام بفرستند ✨")
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "❌ آمار خطاها" and str(msg.chat.id) == self.owner)
-        def error_stats(msg):
-            uid = str(msg.chat.id)
+        elif text == "📥 پیام‌های ناشناس":
+            db_m = self.db.read("messages")
+            inbox = db_m["inbox"].get(uid, [])
             
-            if os.path.exists('shadow_titan.log'):
-                with open('shadow_titan.log', 'r') as f:
-                    lines = f.readlines()
-                
-                error_lines = [line for line in lines if 'ERROR' in line]
-                warning_lines = [line for line in lines if 'WARNING' in line]
-                
-                text = "<b>❌ آمار خطاها و اخطارها</b>\n\n"
-                text += f"📊 کل خطوط لاگ: {len(lines):,}\n"
-                text += f"❌ خطاها: {len(error_lines):,}\n"
-                text += f"⚠️ اخطارها: {len(warning_lines):,}\n\n"
-                
-                if error_lines:
-                    text += "<b>آخرین خطاها:</b>\n"
-                    for line in error_lines[-3:]:
-                        parts = line.split('|')
-                        if len(parts) >= 3:
-                            text += f"• {parts[2].strip()}\n"
-                
-                kb = types.InlineKeyboardMarkup()
-                kb.add(
-                    types.InlineKeyboardButton("📋 مشاهده لاگ", callback_data="view_log"),
-                    types.InlineKeyboardButton("🗑️ پاکسازی لاگ", callback_data="clear_log")
-                )
-                
-                self.bot.send_message(uid, text, reply_markup=kb)
+            if not inbox:
+                self.bot.send_message(uid, "📭 هیچ پیام ناشناسی دریافت نکرده‌اید")
+                return
+            
+            kb = types.InlineKeyboardMarkup()
+            txt = "<b>📥 پیام‌های ناشناس شما</b>\n\n"
+            
+            for i, m in enumerate(inbox):
+                status = "✅" if m.get("seen") else "🔵"
+                txt += f"{status} <b>پیام {i+1}:</b>\n{m['text']}\n"
+                txt += f"<i>🕐 {m['time']}</i>\n\n"
+                kb.add(types.InlineKeyboardButton(f"📝 پاسخ به پیام {i+1}", 
+                                                 callback_data=f"anon_reply_{i}"))
+            
+            self.bot.send_message(uid, txt, reply_markup=kb)
+            
+            # علامت‌گذاری به عنوان دیده شده
+            updated = False
+            for m in inbox:
+                if not m.get("seen"):
+                    m["seen"] = True
+                    updated = True
+                    try:
+                        self.bot.send_message(m["from"], "✅ پیام شما دیده شد")
+                    except:
+                        pass
+            
+            if updated:
+                self.db.write("messages", db_m)
+
+        elif text == "🎡 گردونه شانس":
+            today = str(datetime.date.today())
+            if user.get("last_spin") == today:
+                self.bot.send_message(uid, "⏰ امروز قبلاً گردونه را چرخانده‌اید\n\n"
+                                          "فردا دوباره امتحان کنید! 🎡")
+                return
+            
+            user["last_spin"] = today
+            user["daily_spin_done"] = True
+            self.db.write("users", db_u)
+            
+            # احتمالات جدید
+            rand = random.random()
+            
+            if rand < 0.001:  # 0.1% - VIP 30 روزه
+                self.add_vip(uid, "month", "گردونه شانس")
+                result = "🎉 <b>جایزه بزرگ!</b>\n\n🎖 VIP ۳۰ روزه\n\nتبریک! 🎊"
+            elif rand < 0.05:  # 4.9% - سکه زیاد
+                coins = random.choice([500, 750, 1000])
+                self.add_coins(uid, coins, "گردونه شانس")
+                result = f"🎁 <b>برنده شدید!</b>\n\n💰 {coins:,} سکه\n\nآفرین! ✨"
+            elif rand < 0.3:  # 25% - سکه معمولی
+                coins = random.choice([50, 100, 150, 200])
+                self.add_coins(uid, coins, "گردونه شانس")
+                result = f"🎯 <b>موفق!</b>\n\n💰 {coins:,} سکه\n\nخوب بود! 👍"
+            else:  # 70% - پوچ
+                result = "😔 <b>متأسفانه پوچ!</b>\n\nشانس بعدی را امتحان کنید 🍀"
+            
+            self.bot.send_message(uid, f"🎡 گردونه در حال چرخش...\n\n{result}")
+            
+            # بررسی ماموریت
+            self.check_and_reward_mission(uid)
+
+        elif text == "🎯 ماموریت روزانه":
+            db_m = self.db.read("missions")
+            mission = db_m["daily"]
+            
+            today = str(datetime.date.today())
+            completed = user.get("mission_completed_date") == today
+            
+            # دریافت توضیح ماموریت
+            mission_description = mission.get("description", self.get_mission_description(mission['type'], mission['target']))
+            
+            mission_text = f"<b>🎯 ماموریت روزانه</b>\n\n"
+            mission_text += f"📋 ماموریت: {mission['mission']}\n"
+            mission_text += f"📝 کار انجام‌دادنی: {mission_description}\n"
+            
+            # نمایش پاداش
+            if mission.get("reward_type") == "coins":
+                mission_text += f"🎁 پاداش: {mission.get('reward_value', mission.get('reward', 0)):,} سکه\n\n"
+            elif mission.get("reward_type") == "vip":
+                duration_name = {
+                    "week": "۱ هفته",
+                    "month": "۱ ماه",
+                    "3month": "۳ ماه",
+                    "6month": "۶ ماه",
+                    "year": "۱ سال"
+                }.get(mission.get("reward_value", "week"), "VIP")
+                mission_text += f"🎁 پاداش: VIP {duration_name}\n\n"
             else:
-                self.bot.send_message(uid, "❌ فایل لاگ یافت نشد.")
+                mission_text += f"🎁 پاداش: {mission.get('reward', 0):,} سکه\n\n"
+            
+            if completed:
+                mission_text += "✅ <b>تکمیل شده!</b>\n\nفردا ماموریت جدید منتظر شماست 🌟"
+            else:
+                # نمایش پیشرفت
+                mission_type = mission['type']
+                target = mission['target']
+                
+                if mission_type == "chat_count":
+                    current = user.get("daily_chat_count", 0)
+                    mission_text += f"پیشرفت: {current}/{target} پیام\n"
+                elif mission_type == "unique_chats":
+                    current = len(user.get("daily_unique_chats", []))
+                    mission_text += f"پیشرفت: {current}/{target} چت\n"
+                elif mission_type == "referrals":
+                    current = user.get("total_referrals", 0)
+                    mission_text += f"پیشرفت: {current}/{target} نفر\n"
+                elif mission_type == "spin_wheel":
+                    current = 1 if user.get("daily_spin_done") else 0
+                    mission_text += f"پیشرفت: {'✅' if current else '❌'}\n"
+                elif mission_type == "profile_views":
+                    current = user.get("daily_profile_views", 0)
+                    mission_text += f"پیشرفت: {current}/{target} بار\n"
+                
+                progress = min(100, int((current / target) * 100)) if target > 0 else 0
+                mission_text += f"\n📊 {progress}% تکمیل شده"
+            
+            self.bot.send_message(uid, mission_text)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "🎯 بن الگوریتمی" and str(msg.chat.id) == self.owner)
-        def algorithmic_ban_command(msg):
-            uid = str(msg.chat.id)
+        elif text == "👥 رفرال و دعوت":
+            ref_link = f"https://t.me/{self.username}?start=ref_{uid}"
+            ref_count = user.get("total_referrals", 0)
             
-            self.bot.send_message(uid, "🔍 در حال بررسی کاربران برای بن الگوریتمی...")
-            self.algorithmic_ban()
+            ref_text = f"<b>👥 سیستم رفرال</b>\n\n"
+            ref_text += f"🎁 به ازای هر دعوت موفق: <b>100 سکه</b>\n"
+            ref_text += f"👤 تعداد دعوت‌های شما: <b>{ref_count} نفر</b>\n"
+            ref_text += f"💰 کل سکه از رفرال: <b>{ref_count * 100:,} سکه</b>\n\n"
+            ref_text += f"🔗 لینک دعوت شما:\n<code>{ref_link}</code>\n\n"
+            ref_text += "این لینک را با دوستان خود به اشتراک بگذارید!"
             
-            self.bot.send_message(uid, "✅ بررسی الگوریتمی انجام شد. کاربران متخلف بن شدند.")
+            self.bot.send_message(uid, ref_text)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "⚠️ اخطار به کاربر" and str(msg.chat.id) == self.owner)
-        def warn_user_admin(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "warn_user"
-            self.db.write("users", db_u)
-            self.bot.send_message(uid, "🆔 آیدی کاربر برای اخطار را وارد کنید:")
+        elif text == "🎖 خرید VIP":
+            coins = user.get("coins", 0)
+            
+            vip_text = "<b>🎖 فروشگاه VIP</b>\n\n"
+            vip_text += "<b>ویژگی‌های VIP:</b>\n"
+            vip_text += "✅ ارسال آزاد گیف و استیکر\n"
+            vip_text += "✅ اولویت در بررسی گزارش‌ها\n"
+            vip_text += "✅ دسترسی در زمان تعمیر\n"
+            vip_text += "✅ نشان ویژه VIP\n\n"
+            vip_text += f"💰 موجودی شما: <b>{coins:,} سکه</b>\n\n"
+            
+            # بررسی تاریخ برای VIP رایگان کریسمس
+            christmas_deadline = datetime.datetime(2026, 1, 15)
+            today = datetime.datetime.now()
+            is_christmas_active = today < christmas_deadline
+            
+            kb = types.InlineKeyboardMarkup(row_width=1)
+            
+            # ابتدا VIP های پولی رو اضافه کن
+            vip_options = [
+                ("week", "۱ هفته"),
+                ("month", "۱ ماه"),
+                ("3month", "۳ ماه"),
+                ("6month", "۶ ماه"),
+                ("year", "۱ سال")
+            ]
+            
+            for key, name in vip_options:
+                price = self.vip_prices_coins[key]
+                status = "✅" if coins >= price else "🔒"
+                kb.add(types.InlineKeyboardButton(
+                    f"{status} VIP {name} - {price:,} سکه",
+                    callback_data=f"buy_vip_{key}"
+                ))
+            
+            # حالا VIP رایگان کریسمس رو اضافه کن (اگر فعال باشه و کاربر نگرفته باشه)
+            if is_christmas_active and not user.get("christmas_vip_taken", False):
+                vip_text += "🎄 <b>پیشنهاد ویژه کریسمس!</b>\n"
+                vip_text += "VIP ۳ ماهه رایگان فقط تا ۱۵ ژانویه ۲۰۲۶\n"
+                vip_text += "<i>(هر کاربر فقط یکبار می‌تواند دریافت کند)</i>\n\n"
+                
+                kb.add(types.InlineKeyboardButton(
+                    f"🎁 VIP ۳ ماه رایگان (ویژه کریسمس) - ۰ سکه",
+                    callback_data="buy_vip_christmas"
+                ))
+            elif user.get("christmas_vip_taken", False):
+                vip_text += "🎄 <b>شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید</b>\n\n"
+            
+            self.bot.send_message(uid, vip_text, reply_markup=kb)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "🔄 بازیابی حساب" and str(msg.chat.id) == self.owner)
-        def recover_account(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "recover_account"
-            self.db.write("users", db_u)
-            self.bot.send_message(uid, "🆔 آیدی کاربر برای بازیابی حساب را وارد کنید:")
+        elif text == "❓ راهنما و قوانین":
+            help_text = "<b>📖 راهنما و قوانین</b>\n\n"
+            help_text += "<b>چگونه کار می‌کند؟</b>\n"
+            help_text += "• چت کاملاً ناشناس است\n"
+            help_text += "• با افراد تصادفی گفتگو کنید\n"
+            help_text += "• سکه جمع کنید و VIP بخرید\n\n"
+            help_text += "<b>قوانین:</b>\n"
+            help_text += "❌ فحاشی ممنوع\n"
+            help_text += "❌ محتوای +18 ممنوع\n"
+            help_text += "❌ اسپم و آزار ممنوع\n\n"
+            help_text += "<b>سیستم اخطار:</b>\n"
+            help_text += "• اخطار ۳: بن ۲۴ ساعته\n"
+            help_text += "• تکرار پس از بن: بن دائم\n\n"
+            help_text += f"پشتیبانی: {self.support}"
+            
+            self.bot.send_message(uid, help_text)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "✏️ متن‌های ربات" and str(msg.chat.id) == self.owner)
-        def edit_bot_texts(msg):
-            uid = str(msg.chat.id)
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(
-                types.InlineKeyboardButton("🛰 متن شروع چت", callback_data="edit_start_chat"),
-                types.InlineKeyboardButton("👤 متن پروفایل", callback_data="edit_profile")
-            )
-            kb.add(
-                types.InlineKeyboardButton("🎯 متن ماموریت", callback_data="edit_mission"),
-                types.InlineKeyboardButton("📖 متن راهنما", callback_data="edit_help")
-            )
-            kb.add(
-                types.InlineKeyboardButton("⚠️ متن اخطار", callback_data="edit_warning"),
-                types.InlineKeyboardButton("🚫 متن بن", callback_data="edit_ban")
-            )
-            
-            self.bot.send_message(uid, "<b>✏️ ویرایش متن‌های ربات</b>\n\n"
-                                      "متن مورد نظر برای ویرایش را انتخاب کنید:", 
-                                reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "🚫 کلمات فیلتر" and str(msg.chat.id) == self.owner)
-        def manage_filter_words(msg):
-            uid = str(msg.chat.id)
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(
-                types.InlineKeyboardButton("➕ اضافه کردن کلمه", callback_data="add_filter_word"),
-                types.InlineKeyboardButton("➖ حذف کلمه", callback_data="remove_filter_word")
-            )
-            kb.add(
-                types.InlineKeyboardButton("📋 لیست کلمات", callback_data="list_filter_words"),
-                types.InlineKeyboardButton("🔄 بازنشانی لیست", callback_data="reset_filter_words")
-            )
-            
-            self.bot.send_message(uid, f"<b>🚫 مدیریت کلمات فیلتر</b>\n\n"
-                                      f"تعداد کلمات فعلی: {len(self.bad_words)}\n\n"
-                                      f"عملیات مورد نظر را انتخاب کنید:", 
-                                reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "⚙️ حساسیت AI" and str(msg.chat.id) == self.owner)
-        def ai_sensitivity_settings(msg):
-            uid = str(msg.chat.id)
-            
-            text = "<b>⚙️ تنظیمات حساسیت AI</b>\n\n"
-            text += f"🎯 حساسیت فعلی:\n"
-            text += f"• محتوای سمی: {self.ai_sensitivity['toxic']}\n"
-            text += f"• محتوای +18: {self.ai_sensitivity['nsfw']}\n\n"
-            text += "مقدار پیشنهادی: 0.7-0.9\n"
-            text += "مقدار کمتر = حساسیت کمتر\n"
-            text += "مقدار بیشتر = حساسیت بیشتر"
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(
-                types.InlineKeyboardButton("➕ افزایش حساسیت", callback_data="increase_sensitivity"),
-                types.InlineKeyboardButton("➖ کاهش حساسیت", callback_data="decrease_sensitivity")
-            )
-            kb.add(
-                types.InlineKeyboardButton("🔙 مقدار پیش‌فرض", callback_data="reset_sensitivity"),
-                types.InlineKeyboardButton("🧪 تست AI", callback_data="test_ai")
-            )
-            
-            self.bot.send_message(uid, text, reply_markup=kb)
-
-        @self.bot.message_handler(func=lambda msg: msg.text == "📢 پیام همگانی" and str(msg.chat.id) == self.owner)
-        def broadcast_message(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "broadcast_message"
-            self.db.write("users", db_u)
-            
+        elif text == "⚙ تنظیمات":
             kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-            kb.add("👥 همه کاربران", "🎖 فقط VIP", "🔙 بازگشت")
-            
-            self.bot.send_message(uid, "<b>📢 ارسال پیام همگانی</b>\n\n"
-                                      "ابتدا مخاطبان را انتخاب کنید:", 
-                                reply_markup=kb)
+            kb.add("✏️ تغییر نام", "🔢 تغییر سن")
+            kb.add("⚧ تغییر جنسیت", "🔙 بازگشت به منو")
+            self.bot.send_message(uid, "⚙️ تنظیمات پروفایل:", reply_markup=kb)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "🎛️ قابلیت‌ها" and str(msg.chat.id) == self.owner)
-        def manage_features(msg):
-            uid = str(msg.chat.id)
-            
-            text = "<b>🎛️ مدیریت قابلیت‌های ربات</b>\n\n"
-            text += "قابلیت‌های قابل فعال/غیرفعال کردن:\n\n"
-            text += "🛰 چت ناشناس\n"
-            text += "📩 پیام ناشناس\n"
-            text += "🎡 گردونه شانس\n"
-            text += "🎯 ماموریت روزانه\n"
-            text += "👥 سیستم رفرال\n"
-            text += "🎖 فروشگاه VIP\n"
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
+        elif text == "✏️ تغییر نام":
+            user["state"] = "change_name"
+            self.db.write("users", db_u)
+            self.bot.send_message(uid, "✏️ نام جدید را وارد کنید:")
+
+        elif text == "🔢 تغییر سن":
+            user["state"] = "change_age"
+            self.db.write("users", db_u)
+            self.bot.send_message(uid, "🔢 سن جدید را وارد کنید (۱۲-۹۹):")
+
+        elif text == "⚧ تغییر جنسیت":
+            kb = types.InlineKeyboardMarkup()
             kb.add(
-                types.InlineKeyboardButton("✅ فعال کردن", callback_data="enable_features"),
-                types.InlineKeyboardButton("❌ غیرفعال کردن", callback_data="disable_features")
+                types.InlineKeyboardButton("آقا 👦", callback_data="change_sex_m"),
+                types.InlineKeyboardButton("خانم 👧", callback_data="change_sex_f")
             )
-            
-            self.bot.send_message(uid, text, reply_markup=kb)
+            self.bot.send_message(uid, "⚧ جنسیت جدید را انتخاب کنید:", reply_markup=kb)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "💰 تاریخچه تراکنش‌ها" and str(msg.chat.id) == self.owner)
-        def transaction_history(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "view_transactions"
-            self.db.write("users", db_u)
-            self.bot.send_message(uid, "🆔 آیدی کاربر برای مشاهده تاریخچه تراکنش‌ها را وارد کنید:")
+        # پنل مدیریت
+        if uid == self.owner:
+            if text == "📊 پنل مدیریت":
+                self.bot.send_message(uid, "<b>📊 پنل مدیریت پیشرفته</b>", 
+                                    reply_markup=self.kb_admin())
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "💸 کسر سکه" and str(msg.chat.id) == self.owner)
-        def deduct_coins_admin(msg):
-            uid = str(msg.chat.id)
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "deduct_coins_amount"
-            self.db.write("users", db_u)
-            self.bot.send_message(uid, "💰 مقدار سکه برای کسر را وارد کنید:")
+            elif text == "📈 آمار کامل":
+                total = len(db_u["users"])
+                males = sum(1 for u in db_u["users"].values() if u.get("sex") == "آقا")
+                females = total - males
+                vips = sum(1 for uid_key in db_u["users"] if self.is_vip(uid_key))
+                total_coins = sum(u.get("coins", 0) for u in db_u["users"].values())
+                
+                stats_text = f"<b>📈 آمار کامل ربات</b>\n\n"
+                stats_text += f"👥 کل کاربران: {total:,}\n"
+                stats_text += f"👦 آقا: {males:,}\n"
+                stats_text += f"👧 خانم: {females:,}\n"
+                stats_text += f"🎖 VIP فعال: {vips:,}\n"
+                stats_text += f"💰 کل سکه‌ها: {total_coins:,}\n"
+                stats_text += f"🚫 بن دائم: {len(db_b.get('permanent', {})):,}\n"
+                stats_text += f"⏰ بن موقت: {len(db_b.get('temporary', {})):,}\n"
+                stats_text += f"💬 چت‌های فعال: {len(self.db.read('chats')):,}"
+                
+                self.bot.send_message(uid, stats_text)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "⚙️ تنظیم قیمت‌ها" and str(msg.chat.id) == self.owner)
-        def set_vip_prices(msg):
-            uid = str(msg.chat.id)
-            
-            text = "<b>⚙️ تنظیم قیمت‌های VIP</b>\n\n"
-            text += f"قیمت‌های فعلی (سکه):\n"
-            for key, price in self.vip_prices_coins.items():
-                if key != "christmas":
+            elif text == "⚠️ هشدار تعمیر":
+                if self.maintenance_warning_active:
+                    kb = types.InlineKeyboardMarkup()
+                    kb.add(
+                        types.InlineKeyboardButton("⛔ لغو هشدار", callback_data="cancel_maintenance_warning"),
+                        types.InlineKeyboardButton("❌ انصراف", callback_data="cancel_no")
+                    )
+                    self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر در حال اجراست!</b>\n\n"
+                                              "آیا می‌خواهید هشدار را لغو کنید؟", 
+                                        reply_markup=kb)
+                else:
+                    kb = types.InlineKeyboardMarkup()
+                    kb.add(
+                        types.InlineKeyboardButton("✅ بله، شروع کن", callback_data="start_maintenance_warning"),
+                        types.InlineKeyboardButton("❌ خیر، لغو کن", callback_data="cancel_maintenance")
+                    )
+                    self.bot.send_message(uid, "⚠️ <b>هشدار تعمیر و نگهداری</b>\n\n"
+                                              "با شروع هشدار:\n"
+                                              "• هر 30 ثانیه پیام هشدار ارسال می‌شود\n"
+                                              "• بعد از 3 دقیقه ربات به حالت تعمیر می‌رود\n"
+                                              "• کاربران VIP همچنان دسترسی خواهند داشت\n\n"
+                                              "آیا مطمئن هستید؟", 
+                                        reply_markup=kb)
+
+            elif text == "🛠 تعمیر و نگهداری":
+                db_c = self.db.read("config")
+                db_c["settings"]["maintenance"] = not db_c["settings"].get("maintenance", False)
+                self.db.write("config", db_c)
+                status = "🟢 فعال" if db_c["settings"]["maintenance"] else "🔴 غیرفعال"
+                self.bot.send_message(uid, f"حالت تعمیر و نگهداری: {status}")
+
+            elif text == "🎖 گیفت VIP تکی":
+                user["admin_state"] = "gift_vip_duration"
+                self.db.write("users", db_u)
+                
+                kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                kb.add("۱ هفته", "۱ ماه", "۳ ماه")
+                kb.add("۶ ماه", "۱ سال", "🔙 بازگشت")
+                self.bot.send_message(uid, "⏰ مدت VIP را انتخاب کنید:", reply_markup=kb)
+
+            elif text == "🎖 گیفت VIP همگانی":
+                user["admin_state"] = "gift_vip_all_duration"
+                self.db.write("users", db_u)
+                
+                kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                kb.add("۱ هفته", "۱ ماه", "۳ ماه")
+                kb.add("۶ ماه", "۱ سال", "🔙 بازگشت")
+                self.bot.send_message(uid, "⏰ مدت VIP همگانی را انتخاب کنید:", reply_markup=kb)
+
+            elif text == "❌ حذف VIP":
+                user["admin_state"] = "remove_vip"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "🆔 آیدی عددی کاربر برای حذف VIP:")
+
+            elif text == "📋 لیست VIP":
+                active_vips = [u for u in db_u["users"] if self.is_vip(u)]
+                
+                if not active_vips:
+                    self.bot.send_message(uid, "❌ هیچ کاربر VIP فعال وجود ندارد")
+                else:
+                    vip_text = "<b>📋 لیست کاربران VIP فعال</b>\n\n"
+                    for v in active_vips[:50]:
+                        name = db_u["users"][v].get("name", "نامشخص")
+                        end_date = datetime.datetime.fromtimestamp(
+                            db_u["users"][v].get("vip_end", 0)
+                        ).strftime("%Y-%m-%d")
+                        
+                        now = datetime.datetime.now().timestamp()
+                        remaining_days = int((db_u["users"][v].get("vip_end", 0) - now) / (24 * 3600))
+                        
+                        vip_text += f"🆔 <code>{v}</code> - {name}\n📅 تا {end_date} ({remaining_days} روز)\n\n"
+                    
+                    if len(active_vips) > 50:
+                        vip_text += f"\n... و {len(active_vips) - 50} نفر دیگر"
+                    
+                    self.bot.send_message(uid, vip_text)
+
+            elif text == "💰 اهدای سکه":
+                user["admin_state"] = "gift_coins_amount"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "💰 مقدار سکه را وارد کنید:")
+
+            elif text == "🎯 مدیریت ماموریت‌ها":
+                db_m = self.db.read("missions")
+                current_mission = db_m["daily"]
+                
+                mission_text = f"<b>🎯 مدیریت ماموریت‌های روزانه</b>\n\n"
+                mission_text += f"<b>ماموریت امروز:</b>\n"
+                mission_text += f"📋 {current_mission['mission']}\n"
+                mission_text += f"📝 کار: {current_mission.get('description', self.get_mission_description(current_mission['type'], current_mission['target']))}\n"
+                
+                if current_mission.get("reward_type") == "coins":
+                    mission_text += f"🎁 پاداش: {current_mission.get('reward_value', current_mission.get('reward', 0)):,} سکه\n"
+                elif current_mission.get("reward_type") == "vip":
                     duration_name = {
                         "week": "۱ هفته",
                         "month": "۱ ماه",
                         "3month": "۳ ماه",
                         "6month": "۶ ماه",
                         "year": "۱ سال"
-                    }.get(key, key)
-                    text += f"• {duration_name}: {price:,}\n"
-            
-            db_u = self.db.read("users")
-            db_u["users"][uid]["admin_state"] = "set_vip_price"
-            self.db.write("users", db_u)
-            
-            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-            kb.add("۱ هفته", "۱ ماه", "۳ ماه", "۶ ماه", "۱ سال", "🔙 بازگشت")
-            
-            self.bot.send_message(uid, text + "\nابتدا مدت VIP را انتخاب کنید:", 
-                                reply_markup=kb)
+                    }.get(current_mission.get("reward_value", "week"), "VIP")
+                    mission_text += f"🎁 پاداش: VIP {duration_name}\n"
+                else:
+                    mission_text += f"🎁 پاداش: {current_mission.get('reward', 0):,} سکه\n"
+                
+                mission_text += f"📅 تاریخ: {current_mission['date']}\n\n"
+                
+                kb = types.InlineKeyboardMarkup(row_width=1)
+                kb.add(types.InlineKeyboardButton("🔄 تغییر ماموریت امروز", 
+                                                 callback_data="change_daily_mission"))
+                kb.add(types.InlineKeyboardButton("📋 مشاهده لیست ماموریت‌ها", 
+                                                 callback_data="view_missions_list"))
+                kb.add(types.InlineKeyboardButton("➕ افزودن ماموریت جدید", 
+                                                 callback_data="add_new_mission"))
+                
+                self.bot.send_message(uid, mission_text, reply_markup=kb)
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "🏷️ کدهای تخفیف" and str(msg.chat.id) == self.owner)
-        def discount_codes(msg):
-            uid = str(msg.chat.id)
-            
-            text = "<b>🏷️ مدیریت کدهای تخفیف</b>\n\n"
-            text += "امکانات سیستم کد تخفیف:\n"
-            text += "• ایجاد کد تخفیف درصدی\n"
-            text += "• ایجاد کد تخفیف مقدار ثابت\n"
-            text += "• محدودیت تعداد استفاده\n"
-            text += "• تاریخ انقضا\n"
-            text += "• تخفیف ویژه VIP\n"
-            
-            kb = types.InlineKeyboardMarkup(row_width=2)
-            kb.add(
-                types.InlineKeyboardButton("➕ ایجاد کد جدید", callback_data="create_discount"),
-                types.InlineKeyboardButton("📋 لیست کدها", callback_data="list_discounts")
-            )
-            kb.add(
-                types.InlineKeyboardButton("📊 آمار کدها", callback_data="discount_stats"),
-                types.InlineKeyboardButton("🗑️ حذف کد", callback_data="delete_discount")
-            )
-            
-            self.bot.send_message(uid, text, reply_markup=kb)
+            elif text == "📁 دانلود دیتابیس":
+                for file_name, file_path in self.db.files.items():
+                    if os.path.exists(file_path):
+                        try:
+                            with open(file_path, 'rb') as f:
+                                self.bot.send_document(uid, f, caption=f"📄 {file_name}.json")
+                        except Exception as e:
+                            logger.error(f"خطا در ارسال فایل {file_name}: {e}")
 
-        @self.bot.message_handler(func=lambda msg: msg.text == "📊 آمار مالی" and str(msg.chat.id) == self.owner)
-        def financial_stats(msg):
-            uid = str(msg.chat.id)
-            
-            # محاسبه آمار مالی
-            db_t = self.db.read("transactions")
-            db_u = self.db.read("users")
-            
-            total_added = 0
-            total_deducted = 0
-            vip_income = 0
-            referral_income = 0  # درآمد از رفرال (در واقع هزینه)
-            wheel_cost = 0  # هزینه گردونه
-            
-            for user_id, transactions in db_t.items():
-                for tx in transactions:
-                    if tx["type"] == "add":
-                        total_added += tx["amount"]
-                        if "referral" in tx["reason"].lower():
-                            referral_income += tx["amount"]
-                    elif tx["type"] == "deduct":
-                        total_deducted += tx["amount"]
-                        if "vip" in tx["reason"].lower():
-                            vip_income += tx["amount"]
-                        elif "wheel" in tx["reason"].lower():
-                            wheel_cost += tx["amount"]
-            
-            total_coins = sum(u.get("coins", 0) for u in db_u["users"].values())
-            
-            text = "<b>📊 آمار مالی جامع</b>\n\n"
-            text += f"💰 کل سکه‌های موجود: {total_coins:,}\n"
-            text += f"📈 کل سکه‌های توزیع شده: {total_added:,}\n"
-            text += f"📉 کل سکه‌های کسر شده: {total_deducted:,}\n"
-            text += f"🎖 درآمد از VIP: {vip_income:,}\n"
-            text += f"👥 هزینه رفرال: {referral_income:,}\n"
-            text += f"🎡 هزینه گردونه: {wheel_cost:,}\n\n"
-            
-            # نمودار دایره‌ای
-            import matplotlib.pyplot as plt
-            import io
-            
-            labels = ['موجودی', 'VIP', 'رفرال', 'گردونه']
-            sizes = [total_coins, vip_income, referral_income, wheel_cost]
-            colors = ['#4ECDC4', '#FF6B6B', '#45B7D1', '#96CEB4']
-            
-            plt.figure(figsize=(8, 8))
-            plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
-            plt.axis('equal')
-            plt.title('توزیع سکه‌ها')
-            
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png')
-            buf.seek(0)
-            plt.close()
-            
-            self.bot.send_photo(uid, buf, caption=text)
+            elif text == "🚫 لیست بن‌شده‌ها":
+                ban_text = "<b>🚫 لیست بن‌شده‌ها</b>\n\n"
+                kb = types.InlineKeyboardMarkup()
+                
+                if db_b.get("permanent"):
+                    ban_text += "<b>بن دائم:</b>\n"
+                    for ban_uid, reason in list(db_b["permanent"].items())[:20]:
+                        name = db_u["users"].get(ban_uid, {}).get("name", "نامشخص")
+                        ban_text += f"🆔 <code>{ban_uid}</code> - {name}\n💬 {reason}\n"
+                        kb.add(types.InlineKeyboardButton(
+                            f"🔓 بخشیدن {ban_uid}", 
+                            callback_data=f"unban_perm_{ban_uid}"
+                        ))
+                    ban_text += "\n"
+                
+                if db_b.get("temporary"):
+                    ban_text += "<b>بن موقت:</b>\n"
+                    for ban_uid, data in list(db_b["temporary"].items())[:20]:
+                        name = db_u["users"].get(ban_uid, {}).get("name", "نامشخص")
+                        end_time = datetime.datetime.fromtimestamp(data["end"]).strftime("%Y-%m-%d %H:%M")
+                        ban_text += f"🆔 <code>{ban_uid}</code> - {name}\n⏰ تا {end_time}\n"
+                        kb.add(types.InlineKeyboardButton(
+                            f"⏰ تمدید بن {ban_uid}", 
+                            callback_data=f"extend_ban_{ban_uid}"
+                        ))
+                
+                if not db_b.get("permanent") and not db_b.get("temporary"):
+                    ban_text += "✅ هیچ کاربر بن‌شده‌ای وجود ندارد"
+                
+                self.bot.send_message(uid, ban_text, reply_markup=kb)
 
-        # هندلرهای جدید برای stateهای ادمین
-        @self.bot.message_handler(func=lambda msg: True)
-        def handle_admin_states(msg):
-            uid = str(msg.chat.id)
-            if uid != self.owner:
-                return
-            
-            db_u = self.db.read("users")
-            user = db_u["users"].get(uid, {})
+            # مدیریت state های ادمین
             admin_state = user.get("admin_state")
             
-            if not admin_state:
-                return
-            
-            # جستجوی کاربر
-            if admin_state == "search_user":
-                query = msg.text
-                results = self.search_users(query)
-                
-                if not results:
-                    self.bot.send_message(uid, "❌ کاربری یافت نشد.")
-                else:
-                    text = f"<b>🔍 نتایج جستجو برای '{query}'</b>\n\n"
-                    for i, result in enumerate(results[:10], 1):
-                        text += f"{i}. {result['name']} (آیدی: {result['id']})\n"
-                        text += f"   👤 جنسیت: {result['sex']} | سن: {result['age']}\n"
-                        text += f"   💰 سکه: {result['coins']:,} | VIP: {'✅' if result['vip'] else '❌'}\n\n"
-                    
-                    if len(results) > 10:
-                        text += f"\n... و {len(results) - 10} نتیجه دیگر"
-                    
-                    kb = types.InlineKeyboardMarkup()
-                    for i, result in enumerate(results[:5], 1):
-                        kb.add(types.InlineKeyboardButton(
-                            f"👤 {result['name']} - {result['id']}", 
-                            callback_data=f"admin_view_user_{result['id']}"
-                        ))
-                    
-                    self.bot.send_message(uid, text, reply_markup=kb)
-                
-                user["admin_state"] = None
-                self.db.write("users", db_u)
-                return
-            
-            # مشاهده تاریخچه تراکنش‌ها
-            elif admin_state == "view_transactions":
-                target_id = msg.text
-                transactions = self.get_user_transactions(target_id)
-                
-                if not transactions:
-                    self.bot.send_message(uid, f"❌ هیچ تراکنشی برای کاربر {target_id} یافت نشد.")
-                else:
-                    text = f"<b>💰 تاریخچه تراکنش‌های کاربر {target_id}</b>\n\n"
-                    total_added = 0
-                    total_deducted = 0
-                    
-                    for tx in transactions[-20:]:  # آخرین 20 تراکنش
-                        amount = tx["amount"]
-                        if tx["type"] == "add":
-                            total_added += amount
-                            text += f"➕ +{amount:,} - {tx['reason']}\n"
-                        else:
-                            total_deducted += amount
-                            text += f"➖ -{amount:,} - {tx['reason']}\n"
-                        
-                        timestamp = datetime.datetime.fromtimestamp(tx["timestamp"]).strftime("%Y-%m-%d %H:%M")
-                        text += f"   ⏰ {timestamp}\n\n"
-                    
-                    text += f"📊 جمع کل:\n"
-                    text += f"➕ افزوده شده: {total_added:,}\n"
-                    text += f"➖ کسر شده: {total_deducted:,}\n"
-                    text += f"📈 خالص: {total_added - total_deducted:,}"
-                    
-                    self.bot.send_message(uid, text)
-                
-                user["admin_state"] = None
-                self.db.write("users", db_u)
-                return
-            
-            # کسر سکه - مرحله 1: مقدار
-            elif admin_state == "deduct_coins_amount":
-                if msg.text.isdigit():
-                    amount = int(msg.text)
-                    user["deduct_amount"] = amount
-                    user["admin_state"] = "deduct_coins_reason"
-                    self.db.write("users", db_u)
-                    self.bot.send_message(uid, "📝 دلیل کسر سکه را بنویسید:")
-                else:
-                    self.bot.send_message(uid, "❌ لطفاً عدد وارد کنید.")
-                return
-            
-            # کسر سکه - مرحله 2: دلیل
-            elif admin_state == "deduct_coins_reason":
-                reason = msg.text
-                user["deduct_reason"] = reason
-                user["admin_state"] = "deduct_coins_target"
-                self.db.write("users", db_u)
-                self.bot.send_message(uid, "🆔 آیدی کاربر برای کسر سکه را وارد کنید:")
-                return
-            
-            # کسر سکه - مرحله 3: کاربر هدف
-            elif admin_state == "deduct_coins_target":
-                target_id = msg.text
-                amount = user.get("deduct_amount", 0)
-                reason = user.get("deduct_reason", "کسر توسط ادمین")
-                
-                if self.deduct_coins(target_id, amount, reason):
-                    # گرفتن موجودی جدید
-                    db_u = self.db.read("users")
-                    new_balance = db_u["users"].get(target_id, {}).get("coins", 0)
-                    
-                    self.bot.send_message(uid, f"✅ {amount:,} سکه از کاربر {target_id} کسر شد.\n"
-                                              f"موجودی جدید: {new_balance:,} سکه\n"
-                                              f"دلیل: {reason}")
-                    
-                    # ثبت لاگ ادمین
-                    self.db.log_admin_action(uid, "deduct_coins", target_id, 
-                                           f"amount={amount}, reason={reason}")
-                else:
-                    self.bot.send_message(uid, "❌ خطا در کسر سکه. کاربر یافت نشد یا موجودی کافی نیست.")
-                
-                # پاک کردن stateها
-                user["admin_state"] = None
-                user.pop("deduct_amount", None)
-                user.pop("deduct_reason", None)
-                self.db.write("users", db_u)
-                return
-            
-            # تنظیم قیمت VIP - مرحله 1: انتخاب مدت
-            elif admin_state == "set_vip_price":
+            if admin_state == "gift_vip_duration":
                 duration_map = {
                     "۱ هفته": "week",
                     "۱ ماه": "month",
@@ -1833,552 +1541,821 @@ class ShadowTitanBot:
                     "۱ سال": "year"
                 }
                 
-                if msg.text in duration_map:
-                    user["set_vip_duration"] = duration_map[msg.text]
-                    user["admin_state"] = "set_vip_price_amount"
+                if text in duration_map:
+                    user["gift_vip_duration"] = duration_map[text]
+                    user["admin_state"] = "gift_vip_reason"
                     self.db.write("users", db_u)
-                    self.bot.send_message(uid, "💰 قیمت جدید را وارد کنید (سکه):")
+                    self.bot.send_message(uid, "📝 دلیل گیفت VIP را بنویسید:")
+                return
+
+            elif admin_state == "gift_vip_reason":
+                user["gift_vip_reason"] = msg.text
+                user["admin_state"] = "gift_vip_id"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "🆔 آیدی عددی کاربر را وارد کنید:")
+                return
+
+            elif admin_state == "gift_vip_id":
+                if msg.text.isdigit():
+                    target_uid = msg.text
+                    duration = user.get("gift_vip_duration")
+                    reason = user.get("gift_vip_reason", "گیفت ادمین")
+                    
+                    if target_uid in db_u["users"]:
+                        success = self.add_vip(target_uid, duration, reason)
+                        if success:
+                            self.bot.send_message(uid, f"✅ گیفت VIP به {target_uid} ارسال شد", 
+                                                reply_markup=self.kb_admin())
+                        else:
+                            self.bot.send_message(uid, "❌ خطا در ارسال گیفت")
+                    else:
+                        self.bot.send_message(uid, "❌ کاربر پیدا نشد")
+                    
+                    user["admin_state"] = None
+                    self.db.write("users", db_u)
+                return
+
+            elif admin_state == "gift_vip_all_duration":
+                duration_map = {
+                    "۱ هفته": "week",
+                    "۱ ماه": "month",
+                    "۳ ماه": "3month",
+                    "۶ ماه": "6month",
+                    "۱ سال": "year"
+                }
+                
+                if text in duration_map:
+                    user["gift_vip_all_duration"] = duration_map[text]
+                    user["admin_state"] = "gift_vip_all_reason"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "📝 دلیل گیفت همگانی را بنویسید:")
+                return
+
+            elif admin_state == "gift_vip_all_reason":
+                duration = user.get("gift_vip_all_duration")
+                reason = msg.text
+                
+                sent_count = 0
+                for target_uid in db_u["users"]:
+                    if self.add_vip(target_uid, duration, reason):
+                        sent_count += 1
+                
+                self.bot.send_message(uid, f"✅ گیفت VIP به {sent_count} کاربر ارسال شد", 
+                                    reply_markup=self.kb_admin())
+                user["admin_state"] = None
+                self.db.write("users", db_u)
+                return
+
+            elif admin_state == "remove_vip":
+                if msg.text.isdigit():
+                    target_uid = msg.text
+                    if target_uid in db_u["users"]:
+                        db_u["users"][target_uid]["vip_end"] = 0
+                        db_u["users"][target_uid]["christmas_vip_taken"] = False
+                        self.db.write("users", db_u)
+                        try:
+                            self.bot.send_message(target_uid, "❌ VIP شما توسط ادمین حذف شد")
+                        except:
+                            pass
+                        self.bot.send_message(uid, f"✅ VIP از کاربر {target_uid} حذف شد", 
+                                            reply_markup=self.kb_admin())
+                    else:
+                        self.bot.send_message(uid, "❌ کاربر پیدا نشد")
+                    
+                    user["admin_state"] = None
+                    self.db.write("users", db_u)
+                return
+
+            elif admin_state == "gift_coins_amount":
+                if msg.text.isdigit():
+                    user["gift_coins_amount"] = int(msg.text)
+                    user["admin_state"] = "gift_coins_reason"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "📝 دلیل اهدا سکه را بنویسید:")
                 else:
-                    self.bot.send_message(uid, "❌ لطفاً از گزینه‌ها استفاده کنید.")
+                    self.bot.send_message(uid, "❌ لطفاً عدد وارد کنید")
+                return
+
+            elif admin_state == "gift_coins_reason":
+                user["gift_coins_reason"] = msg.text
+                user["admin_state"] = "gift_coins_id"
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "🆔 آیدی عددی کاربر را وارد کنید:")
+                return
+
+            elif admin_state == "gift_coins_id":
+                if msg.text.isdigit():
+                    target_uid = msg.text
+                    amount = user.get("gift_coins_amount", 0)
+                    reason = user.get("gift_coins_reason", "هدیه ادمین")
+                    
+                    if target_uid in db_u["users"]:
+                        success = self.add_coins(target_uid, amount, reason)
+                        if success:
+                            db_u = self.db.read("users")
+                            user = db_u["users"].get(uid)
+                            self.bot.send_message(uid, f"✅ {amount:,} سکه به {target_uid} اهدا شد\n"
+                                                     f"موجودی جدید کاربر: {db_u['users'][target_uid].get('coins', 0):,} سکه", 
+                                                reply_markup=self.kb_admin())
+                        else:
+                            self.bot.send_message(uid, "❌ خطا در اهدا سکه")
+                    else:
+                        self.bot.send_message(uid, "❌ کاربر پیدا نشد")
+                    
+                    user["admin_state"] = None
+                    self.db.write("users", db_u)
+                return
+
+            elif admin_state == "admin_temp_ban_minutes":
+                if msg.text.isdigit():
+                    minutes = int(msg.text)
+                    target = user.get("admin_temp_ban_target")
+                    if target:
+                        self.ban_temp(target, minutes, "بن موقت توسط ادمین")
+                        self.bot.send_message(uid, f"✅ بن موقت {minutes} دقیقه‌ای برای کاربر {target} اعمال شد.", 
+                                            reply_markup=self.kb_admin())
+                    else:
+                        self.bot.send_message(uid, "❌ خطا در اعمال بن موقت.")
+                    user["admin_state"] = None
+                    self.db.write("users", db_u)
+                else:
+                    self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                return
+
+            # Stateهای افزودن ماموریت جدید
+            elif admin_state == "add_mission_reward_type":
+                if text == "🎖 VIP":
+                    user["add_mission_reward_type"] = "vip"
+                    user["admin_state"] = "add_mission_vip_duration"
+                    self.db.write("users", db_u)
+                    
+                    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                    kb.add("۱ هفته", "۱ ماه", "۳ ماه")
+                    kb.add("۶ ماه", "۱ سال", "🔙 بازگشت")
+                    self.bot.send_message(uid, "⏰ مدت VIP را انتخاب کنید:", reply_markup=kb)
+                elif text == "💰 سکه":
+                    user["add_mission_reward_type"] = "coins"
+                    user["admin_state"] = "add_mission_coins_amount"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "💰 مقدار سکه را وارد کنید:")
+                return
+
+            elif admin_state == "add_mission_vip_duration":
+                duration_map = {
+                    "۱ هفته": "week",
+                    "۱ ماه": "month",
+                    "۳ ماه": "3month",
+                    "۶ ماه": "6month",
+                    "۱ سال": "year"
+                }
+                
+                if text in duration_map:
+                    user["add_mission_vip_duration"] = duration_map[text]
+                    user["admin_state"] = "add_mission_title"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "📝 عنوان ماموریت را وارد کنید:")
+                return
+
+            elif admin_state == "add_mission_coins_amount":
+                if msg.text.isdigit():
+                    user["add_mission_coins_amount"] = int(msg.text)
+                    user["admin_state"] = "add_mission_title"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "📝 عنوان ماموریت را وارد کنید:")
+                else:
+                    self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                return
+
+            elif admin_state == "add_mission_title":
+                user["add_mission_title"] = msg.text
+                user["admin_state"] = "add_mission_type"
+                self.db.write("users", db_u)
+                
+                kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+                kb.add("chat_count", "unique_chats", "referrals")
+                kb.add("spin_wheel", "profile_views", "🔙 بازگشت")
+                self.bot.send_message(uid, "🎯 نوع ماموریت را انتخاب کنید:\n\n"
+                                          "• chat_count: تعداد پیام در چت\n"
+                                          "• unique_chats: چت با افراد مختلف\n"
+                                          "• referrals: دعوت افراد\n"
+                                          "• spin_wheel: چرخاندن گردونه\n"
+                                          "• profile_views: بازدید از پروفایل", 
+                                    reply_markup=kb)
+                return
+
+            elif admin_state == "add_mission_type":
+                if text in ["chat_count", "unique_chats", "referrals", "spin_wheel", "profile_views"]:
+                    user["add_mission_type"] = text
+                    user["admin_state"] = "add_mission_target"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(uid, "🎯 هدف (عدد) را وارد کنید:")
+                else:
+                    self.bot.send_message(uid, "❌ لطفا از گزینه‌ها استفاده کنید.")
+                return
+
+            elif admin_state == "add_mission_target":
+                if msg.text.isdigit():
+                    target = int(msg.text)
+                    
+                    mission_data = {
+                        "name": user.get("add_mission_title"),
+                        "type": user.get("add_mission_type"),
+                        "target": target,
+                        "description": self.get_mission_description(user.get("add_mission_type"), target)
+                    }
+                    
+                    reward_type = user.get("add_mission_reward_type")
+                    if reward_type == "vip":
+                        mission_data["reward_type"] = "vip"
+                        mission_data["reward_value"] = user.get("add_mission_vip_duration", "week")
+                        mission_data["reward"] = 0
+                    else:
+                        mission_data["reward_type"] = "coins"
+                        mission_data["reward_value"] = user.get("add_mission_coins_amount", 50)
+                        mission_data["reward"] = user.get("add_mission_coins_amount", 50)
+                    
+                    db_m = self.db.read("missions")
+                    db_m["available"].append(mission_data)
+                    self.db.write("missions", db_m)
+                    
+                    mission_info = f"✅ <b>ماموریت جدید اضافه شد</b>\n\n"
+                    mission_info += f"📝 عنوان: {mission_data['name']}\n"
+                    mission_info += f"📝 توضیح: {mission_data['description']}\n"
+                    mission_info += f"🎯 نوع: {mission_data['type']}\n"
+                    mission_info += f"🎯 هدف: {mission_data['target']}\n"
+                    
+                    if mission_data["reward_type"] == "coins":
+                        mission_info += f"💰 پاداش: {mission_data['reward_value']:,} سکه\n"
+                    else:
+                        duration_name = {
+                            "week": "۱ هفته",
+                            "month": "۱ ماه",
+                            "3month": "۳ ماه",
+                            "6month": "۶ ماه",
+                            "year": "۱ سال"
+                        }.get(mission_data["reward_value"], "VIP")
+                        mission_info += f"🎖 پاداش: VIP {duration_name}\n"
+                    
+                    self.bot.send_message(uid, mission_info, reply_markup=self.kb_admin())
+                    
+                    keys_to_delete = [
+                        "add_mission_reward_type", "add_mission_vip_duration",
+                        "add_mission_coins_amount", "add_mission_title",
+                        "add_mission_type", "add_mission_target", "admin_state"
+                    ]
+                    for key in keys_to_delete:
+                        if key in user:
+                            del user[key]
+                    self.db.write("users", db_u)
+                else:
+                    self.bot.send_message(uid, "❌ لطفا عدد وارد کنید.")
+                return
+
+        # بازگشت به منو
+        if "بازگشت" in text or text == "🔙 بازگشت به منو":
+            user["state"] = "idle"
+            user["admin_state"] = None
+            
+            keys_to_delete = [
+                "add_mission_reward_type", "add_mission_vip_duration",
+                "add_mission_coins_amount", "add_mission_title",
+                "add_mission_type", "add_mission_target"
+            ]
+            for key in keys_to_delete:
+                if key in user:
+                    del user[key]
+            
+            self.db.write("users", db_u)
+            self.bot.send_message(uid, "🏠 منوی اصلی", reply_markup=self.kb_main(uid))
+    
+    def process_callback(self, call):
+        """پردازش کال‌بک‌ها"""
+        uid = str(call.from_user.id)
+        db_u = self.db.read("users")
+        user = db_u["users"].get(uid)
+        
+        if not user:
+            self.bot.answer_callback_query(call.id, "❌ خطا: کاربر یافت نشد")
+            return
+
+        # انتخاب جنسیت
+        if call.data.startswith("sex_"):
+            user["sex"] = "آقا" if call.data == "sex_m" else "خانم"
+            user["state"] = "age"
+            self.db.write("users", db_u)
+            self.bot.edit_message_text("✅ جنسیت ثبت شد", call.message.chat.id, call.message.message_id)
+            self.bot.send_message(uid, "🔢 سن خود را وارد کنید (۱۲-۹۹):")
+
+        # تغییر جنسیت
+        elif call.data.startswith("change_sex_"):
+            user["sex"] = "آقا" if call.data == "change_sex_m" else "خانم"
+            self.db.write("users", db_u)
+            self.bot.edit_message_text("✅ جنسیت تغییر کرد", call.message.chat.id, call.message.message_id)
+            self.bot.send_message(uid, "✅ جنسیت با موفقیت تغییر کرد", reply_markup=self.kb_main(uid))
+
+        # جستجوی چت
+        elif call.data.startswith("find_"):
+            search_gender = call.data.split("_")[1]
+            user["search_gender"] = search_gender
+            self.db.write("users", db_u)
+
+            self.bot.edit_message_text("🔍 در حال جستجو برای هم‌صحبت...", 
+                                      call.message.chat.id, call.message.message_id)
+            
+            kb_cancel = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            kb_cancel.add("❌ لغو جستجو")
+            self.bot.send_message(uid, "⏳ منتظر بمانید...", reply_markup=kb_cancel)
+
+            db_q = self.db.read("queue")
+            if "general" not in db_q:
+                db_q["general"] = []
+            
+            if uid not in db_q["general"]:
+                db_q["general"].append(uid)
+                self.db.write("queue", db_q)
+
+            # یافتن هم‌صحبت
+            potential_partners = [p for p in db_q["general"] if p != uid]
+            
+            potential_partners = [
+                p for p in potential_partners 
+                if uid not in db_u["users"].get(p, {}).get("blocks", []) 
+                and p not in user.get("blocks", [])
+            ]
+
+            valid_partners = []
+            for p in potential_partners:
+                partner_sex = db_u["users"].get(p, {}).get("sex")
+                if search_gender == "any":
+                    valid_partners.append(p)
+                elif search_gender == "m" and partner_sex == "آقا":
+                    valid_partners.append(p)
+                elif search_gender == "f" and partner_sex == "خانم":
+                    valid_partners.append(p)
+
+            if valid_partners:
+                partner = random.choice(valid_partners)
+                
+                if uid in db_q["general"]:
+                    db_q["general"].remove(uid)
+                if partner in db_q["general"]:
+                    db_q["general"].remove(partner)
+                self.db.write("queue", db_q)
+
+                user["partner"] = partner
+                db_u["users"][partner]["partner"] = uid
+                self.db.write("users", db_u)
+                
+                self.save_active_chat(uid, partner)
+                self.save_active_chat(partner, uid)
+
+                self.bot.send_message(uid, "✅ هم‌صحبت پیدا شد! چت را شروع کنید 💬", 
+                                    reply_markup=self.kb_chatting())
+                self.bot.send_message(partner, "✅ هم‌صحبت پیدا شد! چت را شروع کنید 💬", 
+                                    reply_markup=self.kb_chatting())
+
+        # پایان چت
+        elif call.data == "end_yes":
+            partner = user.get("partner")
+            if partner:
+                self.end_chat(uid, partner, "پایان داد")
+            self.bot.answer_callback_query(call.id, "چت پایان یافت")
+
+        elif call.data == "end_no":
+            self.bot.answer_callback_query(call.id, "✅ چت ادامه دارد")
+
+        # اشتراک آیدی
+        elif call.data.startswith("id_share_yes_"):
+            requester = call.data.split("_")[3]
+            username = call.from_user.username or "ندارد"
+            user_id = call.from_user.id
+            
+            share_text = f"<b>👤 اطلاعات هم‌صحبت:</b>\n\n"
+            if username != "ندارد":
+                share_text += f"یوزرنیم: @{username}\n"
+            share_text += f"آیدی: <code>{user_id}</code>"
+            
+            self.bot.send_message(requester, share_text)
+            self.bot.answer_callback_query(call.id, "✅ اطلاعات ارسال شد")
+
+        elif call.data == "id_share_no":
+            self.bot.answer_callback_query(call.id, "❌ درخواست رد شد")
+
+        # پاسخ به پیام ناشناس
+        elif call.data.startswith("anon_reply_"):
+            msg_index = int(call.data.split("_")[2])
+            db_m = self.db.read("messages")
+            inbox = db_m["inbox"].get(uid, [])
+            
+            if msg_index < len(inbox):
+                msg_data = inbox[msg_index]
+                user["state"] = "anon_reply"
+                user["anon_reply_target"] = msg_data["from"]
+                self.db.write("users", db_u)
+                self.bot.send_message(uid, "📝 پاسخ خود را بنویسید:")
+                self.bot.answer_callback_query(call.id, "✅ پاسخ دهید")
+
+        # گزارش تخلف
+        elif call.data.startswith("rep_"):
+            if call.data == "rep_cancel":
+                self.bot.answer_callback_query(call.id, "✅ گزارش لغو شد")
                 return
             
-            # تنظیم قیمت VIP - مرحله 2: وارد کردن قیمت
-            elif admin_state == "set_vip_price_amount":
-                if msg.text.isdigit():
-                    price = int(msg.text)
-                    duration = user.get("set_vip_duration")
+            reasons = {
+                "rep_insult": "فحاشی",
+                "rep_nsfw": "محتوای +18",
+                "rep_spam": "اسپم",
+                "rep_harass": "آزار و اذیت"
+            }
+            
+            reason = reasons.get(call.data, "نامشخص")
+            target = user.get("report_target")
+            
+            if not target:
+                self.bot.answer_callback_query(call.id, "❌ خطا در گزارش")
+                return
+            
+            target_name = db_u["users"].get(target, {}).get("name", "نامشخص")
+            reporter_name = user.get("name", "نامشخص")
+            
+            tehran_time = datetime.datetime.now(ZoneInfo("Asia/Tehran")).strftime("%Y-%m-%d %H:%M")
+            
+            report_text = f"🚩 <b>گزارش جدید</b>\n\n"
+            report_text += f"<b>شاکی:</b> 🆔 <code>{uid}</code> - {reporter_name}\n"
+            report_text += f"<b>متهم:</b> 🆔 <code>{target}</code> - {target_name}\n"
+            report_text += f"<b>دلیل:</b> {reason}\n"
+            report_text += f"<b>زمان:</b> {tehran_time}\n"
+            
+            kb = types.InlineKeyboardMarkup(row_width=2)
+            kb.add(
+                types.InlineKeyboardButton("Ignore", callback_data=f"adm_ignore_{target}"),
+                types.InlineKeyboardButton("Permanent Ban", callback_data=f"adm_ban_perm_{target}")
+            )
+            kb.add(
+                types.InlineKeyboardButton("Temp Ban", callback_data=f"adm_ban_temp_{target}"),
+                types.InlineKeyboardButton("Warning +1", callback_data=f"adm_warn1_{target}")
+            )
+            kb.add(
+                types.InlineKeyboardButton("Warning +2", callback_data=f"adm_warn2_{target}")
+            )
+            
+            try:
+                self.bot.send_message(self.owner, report_text, reply_markup=kb)
+                self.bot.answer_callback_query(call.id, "✅ گزارش ارسال شد")
+            except Exception as e:
+                logger.error(f"خطا در ارسال گزارش: {e}")
+                self.bot.answer_callback_query(call.id, "❌ خطا در ارسال گزارش")
+
+        # اقدامات ادمین
+        elif call.data.startswith("adm_"):
+            if uid != self.owner:
+                self.bot.answer_callback_query(call.id, "❌ فقط ادمین")
+                return
+            
+            parts = call.data.split("_")
+            action = parts[1]
+            
+            if action == "ignore":
+                self.bot.answer_callback_query(call.id, "✅ Ignored")
+                self.bot.edit_message_text(call.message.text + "\n\n✅ <b>Ignored</b>", 
+                                          call.message.chat.id, call.message.message_id)
+
+            elif action == "ban":
+                ban_type = parts[2]
+                target = parts[3]
+                
+                if ban_type == "perm":
+                    self.ban_perm(target, "گزارش تأیید شده")
+                    self.bot.answer_callback_query(call.id, "✅ بن دائم اعمال شد")
+                    self.bot.edit_message_text(call.message.text + "\n\n🚫 <b>Permanent Ban</b>", 
+                                              call.message.chat.id, call.message.message_id)
+                
+                elif ban_type == "temp":
+                    user["admin_temp_ban_target"] = target
+                    user["admin_state"] = "admin_temp_ban_minutes"
+                    self.db.write("users", db_u)
+                    self.bot.send_message(self.owner, f"⏰ دقیقه بن موقت برای {target}:")
+                    self.bot.answer_callback_query(call.id, "وارد کنید")
+
+            elif action.startswith("warn"):
+                warns_count = 1 if action == "warn1" else 2
+                target = parts[2]
+                
+                if target in db_u["users"]:
+                    db_u["users"][target]["warns"] = db_u["users"][target].get("warns", 0) + warns_count
+                    self.db.write("users", db_u)
                     
-                    # بروزرسانی قیمت
-                    old_price = self.vip_prices_coins.get(duration, 0)
-                    self.vip_prices_coins[duration] = price
-                    self.save_settings()
+                    try:
+                        self.bot.send_message(target, f"⚠️ {warns_count} اخطار از ادمین دریافت کردید!")
+                    except:
+                        pass
                     
+                    self.bot.answer_callback_query(call.id, f"✅ {warns_count} اخطار اعمال شد")
+                    self.bot.edit_message_text(call.message.text + f"\n\n⚠️ <b>+{warns_count} Warning</b>", 
+                                              call.message.chat.id, call.message.message_id)
+
+        # بخشیدن بن خودکار
+        elif call.data.startswith("auto_ban_correct_"):
+            if uid != self.owner:
+                return
+            self.bot.answer_callback_query(call.id, "✅ تأیید شد")
+            self.bot.edit_message_text(call.message.text + "\n\n✅ <b>Confirmed by admin</b>", 
+                                      call.message.chat.id, call.message.message_id)
+
+        elif call.data.startswith("auto_ban_pardon_"):
+            if uid != self.owner:
+                return
+            
+            target = call.data.split("_")[3]
+            db_b = self.db.read("bans")
+            
+            if target in db_b.get("permanent", {}):
+                del db_b["permanent"][target]
+            if target in db_b.get("temporary", {}):
+                del db_b["temporary"][target]
+            self.db.write("bans", db_b)
+            
+            if target in db_u["users"]:
+                db_u["users"][target]["warns"] = 0
+                db_u["users"][target]["had_temp_ban"] = False
+                self.db.write("users", db_u)
+            
+            try:
+                self.bot.send_message(target, "🌟 حساب شما توسط ادمین از بن خارج شد")
+            except:
+                pass
+            
+            self.bot.answer_callback_query(call.id, "✅ بخشیده شد")
+            self.bot.edit_message_text(call.message.text + "\n\n🌟 <b>Pardoned by admin</b>", 
+                                      call.message.chat.id, call.message.message_id)
+
+        # بخشیدن بن دائم
+        elif call.data.startswith("unban_perm_"):
+            if uid != self.owner:
+                return
+            
+            target = call.data.split("_")[2]
+            db_b = self.db.read("bans")
+            
+            if target in db_b.get("permanent", {}):
+                del db_b["permanent"][target]
+                self.db.write("bans", db_b)
+                
+                try:
+                    self.bot.send_message(target, "🌟 حساب شما از بن دائم خارج شد")
+                except:
+                    pass
+                
+                self.bot.answer_callback_query(call.id, "✅ بخشیده شد")
+
+        # خرید VIP با سکه
+        elif call.data.startswith("buy_vip_"):
+            vip_type = call.data.split("_")[2]
+            
+            if vip_type == "christmas":
+                christmas_deadline = datetime.datetime(2026, 1, 15)
+                today = datetime.datetime.now()
+                
+                if today >= christmas_deadline:
+                    self.bot.answer_callback_query(call.id, "❌ مهلت دریافت VIP رایگان کریسمس به پایان رسیده!", show_alert=True)
+                    return
+                
+                if user.get("christmas_vip_taken", False):
+                    self.bot.answer_callback_query(call.id, "❌ شما قبلاً VIP رایگان کریسمس را دریافت کرده‌اید! هر کاربر فقط یکبار می‌تواند دریافت کند.", show_alert=True)
+                    return
+                
+                self.add_vip(uid, "christmas", "هدیه کریسمس")
+                self.bot.answer_callback_query(call.id, "✅ VIP رایگان کریسمس فعال شد!")
+                return
+            
+            price = self.vip_prices_coins.get(vip_type, 0)
+            coins = user.get("coins", 0)
+            
+            if coins < price:
+                self.bot.answer_callback_query(call.id, f"❌ سکه کافی ندارید! نیاز: {price:,}", show_alert=True)
+                return
+            
+            user["coins"] = coins - price
+            self.db.write("users", db_u)
+            
+            reason_map = {
+                "week": "خرید با سکه",
+                "month": "خرید با سکه", 
+                "3month": "خرید با سکه",
+                "6month": "خرید با سکه",
+                "year": "خرید با سکه"
+            }
+            
+            self.add_vip(uid, vip_type, reason_map.get(vip_type, "خرید با سکه"))
+            self.bot.answer_callback_query(call.id, "✅ VIP فعال شد!")
+
+        # مدیریت ماموریت‌ها
+        elif call.data == "change_daily_mission":
+            if uid != self.owner:
+                return
+            
+            db_m = self.db.read("missions")
+            kb = types.InlineKeyboardMarkup(row_width=1)
+            
+            for i, mission in enumerate(db_m["available"]):
+                reward_text = ""
+                if mission.get("reward_type") == "coins":
+                    reward_text = f"{mission.get('reward_value', mission.get('reward', 0)):,} سکه"
+                elif mission.get("reward_type") == "vip":
                     duration_name = {
                         "week": "۱ هفته",
                         "month": "۱ ماه",
                         "3month": "۳ ماه",
                         "6month": "۶ ماه",
                         "year": "۱ سال"
-                    }.get(duration, duration)
-                    
-                    self.bot.send_message(uid, f"✅ قیمت VIP {duration_name} بروزرسانی شد:\n"
-                                              f"قیمت قبلی: {old_price:,} سکه\n"
-                                              f"قیمت جدید: {price:,} سکه")
-                    
-                    # ثبت لاگ ادمین
-                    self.db.log_admin_action(uid, "update_vip_price", duration, 
-                                           f"old={old_price}, new={price}")
+                    }.get(mission.get("reward_value", "week"), "VIP")
+                    reward_text = f"VIP {duration_name}"
                 else:
-                    self.bot.send_message(uid, "❌ لطفاً عدد وارد کنید.")
+                    reward_text = f"{mission.get('reward', 0):,} سکه"
                 
-                user["admin_state"] = None
-                user.pop("set_vip_duration", None)
-                self.db.write("users", db_u)
-                return
+                kb.add(types.InlineKeyboardButton(
+                    f"{i+1}. {mission['name']} - {reward_text}",
+                    callback_data=f"select_mission_{i}"
+                ))
             
-            # ارسال پیام همگانی - مرحله 1: انتخاب مخاطب
-            elif admin_state == "broadcast_message":
-                target_map = {
-                    "👥 همه کاربران": "all",
-                    "🎖 فقط VIP": "vip"
-                }
-                
-                if msg.text in target_map:
-                    user["broadcast_target"] = target_map[msg.text]
-                    user["admin_state"] = "broadcast_message_text"
-                    self.db.write("users", db_u)
-                    
-                    kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-                    kb.add("🔙 بازگشت")
-                    
-                    self.bot.send_message(uid, "📝 متن پیام همگانی را وارد کنید:", 
-                                        reply_markup=kb)
-                else:
-                    self.bot.send_message(uid, "❌ لطفاً از گزینه‌ها استفاده کنید.")
-                return
-            
-            # ارسال پیام همگانی - مرحله 2: متن پیام
-            elif admin_state == "broadcast_message_text":
-                message = msg.text
-                target = user.get("broadcast_target", "all")
-                
-                # تأیید نهایی
-                kb = types.InlineKeyboardMarkup()
-                kb.add(
-                    types.InlineKeyboardButton("✅ بله، ارسال کن", 
-                                             callback_data=f"confirm_broadcast_{target}"),
-                    types.InlineKeyboardButton("❌ خیر، لغو کن", 
-                                             callback_data="cancel_broadcast")
-                )
-                
-                target_text = "همه کاربران" if target == "all" else "کاربران VIP"
-                self.bot.send_message(uid, f"📢 <b>تأیید ارسال پیام همگانی</b>\n\n"
-                                          f"مخاطب: {target_text}\n\n"
-                                          f"متن پیام:\n{message}\n\n"
-                                          f"آیا مطمئن هستید؟", 
-                                    reply_markup=kb)
-                
-                # ذخیره پیام موقت
-                user["broadcast_message"] = message
-                self.db.write("users", db_u)
-                return
-            
-            # اخطار به کاربر - مرحله 1: آیدی کاربر
-            elif admin_state == "warn_user":
-                target_id = msg.text
-                user["warn_target"] = target_id
-                user["admin_state"] = "warn_user_reason"
-                self.db.write("users", db_u)
-                self.bot.send_message(uid, "📝 دلیل اخطار را بنویسید:")
-                return
-            
-            # اخطار به کاربر - مرحله 2: دلیل
-            elif admin_state == "warn_user_reason":
-                reason = msg.text
-                target_id = user.get("warn_target")
-                
-                if target_id:
-                    db_u = self.db.read("users")
-                    if target_id in db_u["users"]:
-                        db_u["users"][target_id]["warns"] = db_u["users"][target_id].get("warns", 0) + 1
-                        self.db.write("users", db_u)
-                        
-                        try:
-                            self.bot.send_message(target_id, f"⚠️ <b>اخطار از ادمین!</b>\n\n"
-                                                           f"دلیل: {reason}\n"
-                                                           f"لطفاً قوانین را رعایت کنید.")
-                        except:
-                            pass
-                        
-                        self.bot.send_message(uid, f"✅ اخطار به کاربر {target_id} ارسال شد.\n"
-                                                  f"تعداد اخطارهای فعلی: {db_u['users'][target_id]['warns']}/3")
-                        
-                        # ثبت لاگ ادمین
-                        self.db.log_admin_action(uid, "warn_user", target_id, f"reason={reason}")
-                    else:
-                        self.bot.send_message(uid, "❌ کاربر یافت نشد.")
-                
-                user["admin_state"] = None
-                user.pop("warn_target", None)
-                self.db.write("users", db_u)
-                return
-            
-            # بازیابی حساب - مرحله 1: آیدی کاربر
-            elif admin_state == "recover_account":
-                target_id = msg.text
-                
-                # حذف بن‌ها
-                db_b = self.db.read("bans")
-                recovered = False
-                
-                if target_id in db_b["permanent"]:
-                    del db_b["permanent"][target_id]
-                    recovered = True
-                
-                if target_id in db_b["temporary"]:
-                    del db_b["temporary"][target_id]
-                    recovered = True
-                
-                if recovered:
-                    self.db.write("bans", db_b)
-                    
-                    # بازنشانی اخطارها
-                    db_u = self.db.read("users")
-                    if target_id in db_u["users"]:
-                        db_u["users"][target_id]["warns"] = 0
-                        db_u["users"][target_id]["had_temp_ban"] = False
-                        self.db.write("users", db_u)
-                    
-                    try:
-                        self.bot.send_message(target_id, "🌟 <b>حساب شما بازیابی شد!</b>\n\n"
-                                                       "شما می‌توانید دوباره از ربات استفاده کنید.")
-                    except:
-                        pass
-                    
-                    self.bot.send_message(uid, f"✅ حساب کاربر {target_id} با موفقیت بازیابی شد.")
-                    
-                    # ثبت لاگ ادمین
-                    self.db.log_admin_action(uid, "recover_account", target_id, "full_recovery")
-                else:
-                    self.bot.send_message(uid, f"❌ کاربر {target_id} بن نبوده است.")
-                
-                user["admin_state"] = None
-                self.db.write("users", db_u)
-                return
+            self.bot.edit_message_text("📋 لطفا ماموریت روزانه جدید را انتخاب کنید:", 
+                                      call.message.chat.id, call.message.message_id, 
+                                      reply_markup=kb)
+            self.bot.answer_callback_query(call.id, "✅")
 
-        # کال‌بک‌های جدید برای پنل مدیریت
-        @self.bot.callback_query_handler(func=lambda call: True)
-        def callback_handler(call):
-            uid = str(call.from_user.id)
+        elif call.data.startswith("select_mission_"):
             if uid != self.owner:
                 return
             
-            # لیست کاربران بر اساس فیلتر
-            if call.data == "list_vip":
-                db_u = self.db.read("users")
-                vip_users = [u for u in db_u["users"] if self.is_vip(u)]
-                
-                text = "<b>🎖 لیست کاربران VIP</b>\n\n"
-                for i, user_id in enumerate(vip_users[:20], 1):
-                    user = db_u["users"][user_id]
-                    text += f"{i}. {user.get('name', 'نامشخص')}\n"
-                    text += f"   🆔: {user_id}\n"
-                    text += f"   💰 سکه: {user.get('coins', 0):,}\n"
-                    text += f"   ⚠️ اخطار: {user.get('warns', 0)}/3\n\n"
-                
-                if len(vip_users) > 20:
-                    text += f"\n... و {len(vip_users) - 20} کاربر VIP دیگر"
-                
-                self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅")
+            index = int(call.data.split("_")[2])
+            db_m = self.db.read("missions")
             
-            elif call.data == "list_male":
-                db_u = self.db.read("users")
-                male_users = [u for u, data in db_u["users"].items() if data.get("sex") == "آقا"]
+            if index < len(db_m["available"]):
+                mission = db_m["available"][index]
+                db_m["daily"] = {
+                    "date": str(datetime.date.today()),
+                    "mission": mission["name"],
+                    "reward_type": mission.get("reward_type", "coins"),
+                    "reward_value": mission.get("reward_value", mission.get("reward", 50)),
+                    "type": mission["type"],
+                    "target": mission["target"],
+                    "description": mission.get("description", self.get_mission_description(mission["type"], mission["target"]))
+                }
+                self.db.write("missions", db_m)
                 
-                text = "<b>👦 لیست کاربران آقا</b>\n\n"
-                for i, user_id in enumerate(male_users[:20], 1):
-                    user = db_u["users"][user_id]
-                    text += f"{i}. {user.get('name', 'نامشخص')}\n"
-                    text += f"   🆔: {user_id} | سن: {user.get('age', 'نامشخص')}\n"
-                    text += f"   💰 سکه: {user.get('coins', 0):,}\n"
-                    text += f"   VIP: {'✅' if self.is_vip(user_id) else '❌'}\n\n"
+                reward_text = ""
+                if mission.get("reward_type") == "coins":
+                    reward_text = f"{mission.get('reward_value', mission.get('reward', 0)):,} سکه"
+                elif mission.get("reward_type") == "vip":
+                    duration_name = {
+                        "week": "۱ هفته",
+                        "month": "۱ ماه",
+                        "3month": "۳ ماه",
+                        "6month": "۶ ماه",
+                        "year": "۱ سال"
+                    }.get(mission.get("reward_value", "week"), "VIP")
+                    reward_text = f"VIP {duration_name}"
                 
-                if len(male_users) > 20:
-                    text += f"\n... و {len(male_users) - 20} کاربر دیگر"
-                
-                self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "list_female":
-                db_u = self.db.read("users")
-                female_users = [u for u, data in db_u["users"].items() if data.get("sex") == "خانم"]
-                
-                text = "<b>👧 لیست کاربران خانم</b>\n\n"
-                for i, user_id in enumerate(female_users[:20], 1):
-                    user = db_u["users"][user_id]
-                    text += f"{i}. {user.get('name', 'نامشخص')}\n"
-                    text += f"   🆔: {user_id} | سن: {user.get('age', 'نامشخص')}\n"
-                    text += f"   💰 سکه: {user.get('coins', 0):,}\n"
-                    text += f"   VIP: {'✅' if self.is_vip(user_id) else '❌'}\n\n"
-                
-                if len(female_users) > 20:
-                    text += f"\n... و {len(female_users) - 20} کاربر دیگر"
-                
-                self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "list_all":
-                db_u = self.db.read("users")
-                
-                text = "<b>👥 لیست تمام کاربران</b>\n\n"
-                for i, (user_id, user) in enumerate(list(db_u["users"].items())[:20], 1):
-                    text += f"{i}. {user.get('name', 'نامشخص')}\n"
-                    text += f"   🆔: {user_id} | {user.get('sex', 'نامشخص')} | سن: {user.get('age', 'نامشخص')}\n"
-                    text += f"   💰 سکه: {user.get('coins', 0):,} | VIP: {'✅' if self.is_vip(user_id) else '❌'}\n\n"
-                
-                if len(db_u["users"]) > 20:
-                    text += f"\n... و {len(db_u['users']) - 20} کاربر دیگر"
-                
-                self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            # مشاهده کاربر خاص
-            elif call.data.startswith("admin_view_user_"):
-                user_id = call.data.split("_")[3]
-                db_u = self.db.read("users")
-                user = db_u["users"].get(user_id, {})
-                
-                if user:
-                    text = f"<b>👤 اطلاعات کاربر</b>\n\n"
-                    text += f"🆔 آیدی: {user_id}\n"
-                    text += f"📛 نام: {user.get('name', 'نامشخص')}\n"
-                    text += f"⚧ جنسیت: {user.get('sex', 'نامشخص')}\n"
-                    text += f"🔢 سن: {user.get('age', 'نامشخص')}\n"
-                    text += f"💰 سکه: {user.get('coins', 0):,}\n"
-                    text += f"🎖 VIP: {'✅ فعال' if self.is_vip(user_id) else '❌ غیرفعال'}\n"
-                    text += f"⚠️ اخطار: {user.get('warns', 0)}/3\n"
-                    text += f"👥 رفرال: {user.get('total_referrals', 0)} نفر\n"
-                    text += f"📅 عضویت: {user.get('join_date', 'نامشخص')}\n"
-                    text += f"🕐 آخرین فعالیت: {user.get('last_active_date', 'نامشخص')}\n\n"
-                    
-                    kb = types.InlineKeyboardMarkup(row_width=2)
-                    kb.add(
-                        types.InlineKeyboardButton("✏️ ویرایش", callback_data=f"edit_user_{user_id}"),
-                        types.InlineKeyboardButton("💰 اهدا سکه", callback_data=f"gift_user_{user_id}")
-                    )
-                    kb.add(
-                        types.InlineKeyboardButton("🎖 گیفت VIP", callback_data=f"vip_user_{user_id}"),
-                        types.InlineKeyboardButton("🚫 بن کاربر", callback_data=f"ban_user_{user_id}")
-                    )
-                    kb.add(
-                        types.InlineKeyboardButton("📊 تاریخچه", callback_data=f"history_user_{user_id}"),
-                        types.InlineKeyboardButton("🌳 درخت رفرال", callback_data=f"referral_tree_{user_id}")
-                    )
-                    
-                    self.bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=kb)
-                else:
-                    self.bot.answer_callback_query(call.id, "❌ کاربر یافت نشد")
-            
-            # تأیید ارسال پیام همگانی
-            elif call.data.startswith("confirm_broadcast_"):
-                target = call.data.split("_")[2]
-                db_u = self.db.read("users")
-                message = db_u["users"][uid].get("broadcast_message", "")
-                
-                if message:
-                    sent_count = self.send_broadcast(message, target)
-                    target_text = "همه کاربران" if target == "all" else "کاربران VIP"
-                    
-                    self.bot.edit_message_text(f"✅ پیام همگانی ارسال شد\n\n"
-                                              f"مخاطب: {target_text}\n"
-                                              f"تعداد ارسال شده: {sent_count} کاربر\n\n"
-                                              f"متن پیام:\n{message}",
-                                              call.message.chat.id, call.message.message_id)
-                    
-                    # ثبت لاگ ادمین
-                    self.db.log_admin_action(uid, "broadcast", None, 
-                                           f"target={target}, sent={sent_count}")
-                    
-                    # پاک کردن پیام موقت
-                    db_u["users"][uid].pop("broadcast_message", None)
-                    db_u["users"][uid].pop("broadcast_target", None)
-                    db_u["users"][uid]["admin_state"] = None
-                    self.db.write("users", db_u)
-                else:
-                    self.bot.answer_callback_query(call.id, "❌ خطا در ارسال پیام")
-            
-            elif call.data == "cancel_broadcast":
-                db_u = self.db.read("users")
-                db_u["users"][uid].pop("broadcast_message", None)
-                db_u["users"][uid].pop("broadcast_target", None)
-                db_u["users"][uid]["admin_state"] = None
-                self.db.write("users", db_u)
-                
-                self.bot.edit_message_text("❌ ارسال پیام همگانی لغو شد",
+                self.bot.edit_message_text(f"✅ ماموریت روزانه به '{mission['name']}' تغییر کرد.\n\n"
+                                          f"کار انجام‌دادنی: {mission.get('description', self.get_mission_description(mission['type'], mission['target']))}\n"
+                                          f"پاداش: {reward_text}", 
                                           call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅ لغو شد")
-            
-            # مدیریت کلمات فیلتر
-            elif call.data == "add_filter_word":
-                db_u = self.db.read("users")
-                db_u["users"][uid]["admin_state"] = "add_filter_word"
-                self.db.write("users", db_u)
-                
-                self.bot.send_message(uid, "➕ کلمه جدید برای افزودن به فیلتر را وارد کنید:")
                 self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "remove_filter_word":
-                db_u = self.db.read("users")
-                db_u["users"][uid]["admin_state"] = "remove_filter_word"
-                self.db.write("users", db_u)
-                
-                self.bot.send_message(uid, "➖ کلمه برای حذف از فیلتر را وارد کنید:")
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "list_filter_words":
-                text = "<b>📋 لیست کلمات فیلتر</b>\n\n"
-                for i, word in enumerate(self.bad_words, 1):
-                    text += f"{i}. {word}\n"
-                
-                self.bot.send_message(uid, text)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "reset_filter_words":
-                # بازنشانی به لیست پیش‌فرض
-                default_words = [
-                    "کیر", "کیرم", "کیرت", "کیری", "کس", "کص", "کوس", "کوث",
-                    "جنده", "جهنده", "مادرجنده", "قحبه", "قهبه",
-                    "پدرسگ", "پدرسوخته", "حرامزاده", "گاییدم", "گاییدن",
-                    "سیکتیر", "کون", "کونی", "گوه", "لاشی", "فاحشه",
-                    "ناموس", "اوبی", "بی‌ناموس", "سکس", "پورن",
-                    "خارکصه", "تخمم", "شاسگول", "پفیوز", "دیوث"
-                ]
-                
-                self.bad_words = default_words
-                self.save_settings()
-                
-                self.bot.answer_callback_query(call.id, "✅ لیست کلمات بازنشانی شد")
-                self.bot.send_message(uid, "✅ لیست کلمات فیلتر به حالت پیش‌فرض بازنشانی شد.")
-            
-            # تنظیم حساسیت AI
-            elif call.data == "increase_sensitivity":
-                self.ai_sensitivity["toxic"] = min(1.0, self.ai_sensitivity["toxic"] + 0.1)
-                self.ai_sensitivity["nsfw"] = min(1.0, self.ai_sensitivity["nsfw"] + 0.1)
-                self.save_settings()
-                
-                self.bot.answer_callback_query(call.id, "✅ حساسیت افزایش یافت")
-                self.bot.send_message(uid, f"✅ حساسیت AI افزایش یافت:\n"
-                                          f"• محتوای سمی: {self.ai_sensitivity['toxic']:.1f}\n"
-                                          f"• محتوای +18: {self.ai_sensitivity['nsfw']:.1f}")
-            
-            elif call.data == "decrease_sensitivity":
-                self.ai_sensitivity["toxic"] = max(0.1, self.ai_sensitivity["toxic"] - 0.1)
-                self.ai_sensitivity["nsfw"] = max(0.1, self.ai_sensitivity["nsfw"] - 0.1)
-                self.save_settings()
-                
-                self.bot.answer_callback_query(call.id, "✅ حساسیت کاهش یافت")
-                self.bot.send_message(uid, f"✅ حساسیت AI کاهش یافت:\n"
-                                          f"• محتوای سمی: {self.ai_sensitivity['toxic']:.1f}\n"
-                                          f"• محتوای +18: {self.ai_sensitivity['nsfw']:.1f}")
-            
-            elif call.data == "reset_sensitivity":
-                self.ai_sensitivity = {"toxic": 0.8, "nsfw": 0.8}
-                self.save_settings()
-                
-                self.bot.answer_callback_query(call.id, "✅ حساسیت بازنشانی شد")
-                self.bot.send_message(uid, "✅ حساسیت AI به مقدار پیش‌فرض بازنشانی شد.")
-            
-            elif call.data == "test_ai":
-                test_texts = [
-                    "این یک متن تستی است",
-                    "تو خیلی کیری هستی",
-                    "می‌خواهم با تو رابطه جنسی داشته باشم"
-                ]
-                
-                text = "<b>🧪 تست سیستم AI</b>\n\n"
-                for test_text in test_texts:
-                    toxic_score = self.ai_toxic_scan(test_text)
-                    nsfw_score = self.ai_nsfw_scan(test_text)
-                    
-                    text += f"📝 متن: {test_text}\n"
-                    text += f"☠️ امتیاز سمی: {toxic_score:.2f} ({'✅' if toxic_score < self.ai_sensitivity['toxic'] else '❌'})\n"
-                    text += f"🔞 امتیاز +18: {nsfw_score:.2f} ({'✅' if nsfw_score < self.ai_sensitivity['nsfw'] else '❌'})\n\n"
-                
-                self.bot.send_message(uid, text)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            # مدیریت قابلیت‌ها
-            elif call.data == "enable_features":
-                kb = types.InlineKeyboardMarkup(row_width=2)
-                kb.add(
-                    types.InlineKeyboardButton("🛰 چت ناشناس", callback_data="enable_chat"),
-                    types.InlineKeyboardButton("📩 پیام ناشناس", callback_data="enable_anon_msg")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("🎡 گردونه شانس", callback_data="enable_wheel"),
-                    types.InlineKeyboardButton("🎯 ماموریت روزانه", callback_data="enable_missions")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("👥 سیستم رفرال", callback_data="enable_referral"),
-                    types.InlineKeyboardButton("🎖 فروشگاه VIP", callback_data="enable_vip_shop")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("✅ همه", callback_data="enable_all"),
-                    types.InlineKeyboardButton("❌ انصراف", callback_data="cancel_features")
-                )
-                
-                self.bot.edit_message_text("<b>✅ فعال کردن قابلیت‌ها</b>\n\n"
-                                          "قابلیت مورد نظر برای فعال کردن را انتخاب کنید:",
-                                          call.message.chat.id, call.message.message_id,
-                                          reply_markup=kb)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data == "disable_features":
-                kb = types.InlineKeyboardMarkup(row_width=2)
-                kb.add(
-                    types.InlineKeyboardButton("🛰 چت ناشناس", callback_data="disable_chat"),
-                    types.InlineKeyboardButton("📩 پیام ناشناس", callback_data="disable_anon_msg")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("🎡 گردونه شانس", callback_data="disable_wheel"),
-                    types.InlineKeyboardButton("🎯 ماموریت روزانه", callback_data="disable_missions")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("👥 سیستم رفرال", callback_data="disable_referral"),
-                    types.InlineKeyboardButton("🎖 فروشگاه VIP", callback_data="disable_vip_shop")
-                )
-                kb.add(
-                    types.InlineKeyboardButton("❌ همه", callback_data="disable_all"),
-                    types.InlineKeyboardButton("✅ انصراف", callback_data="cancel_features")
-                )
-                
-                self.bot.edit_message_text("<b>❌ غیرفعال کردن قابلیت‌ها</b>\n\n"
-                                          "قابلیت مورد نظر برای غیرفعال کردن را انتخاب کنید:",
-                                          call.message.chat.id, call.message.message_id,
-                                          reply_markup=kb)
-                self.bot.answer_callback_query(call.id, "✅")
-            
-            elif call.data.startswith("enable_"):
-                feature = call.data.split("_")[1]
-                feature_names = {
-                    "chat": "چت ناشناس",
-                    "anon_msg": "پیام ناشناس",
-                    "wheel": "گردونه شانس",
-                    "missions": "ماموریت روزانه",
-                    "referral": "سیستم رفرال",
-                    "vip_shop": "فروشگاه VIP",
-                    "all": "همه قابلیت‌ها"
-                }
-                
-                if self.toggle_feature(feature, True):
-                    self.bot.answer_callback_query(call.id, f"✅ {feature_names.get(feature, feature)} فعال شد")
-                else:
-                    self.bot.answer_callback_query(call.id, "❌ خطا")
-            
-            elif call.data.startswith("disable_"):
-                feature = call.data.split("_")[1]
-                feature_names = {
-                    "chat": "چت ناشناس",
-                    "anon_msg": "پیام ناشناس",
-                    "wheel": "گردونه شانس",
-                    "missions": "ماموریت روزانه",
-                    "referral": "سیستم رفرال",
-                    "vip_shop": "فروشگاه VIP",
-                    "all": "همه قابلیت‌ها"
-                }
-                
-                if self.toggle_feature(feature, False):
-                    self.bot.answer_callback_query(call.id, f"✅ {feature_names.get(feature, feature)} غیرفعال شد")
-                else:
-                    self.bot.answer_callback_query(call.id, "❌ خطا")
-            
-            elif call.data == "cancel_features":
-                self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                self.bot.answer_callback_query(call.id, "✅ انصراف")
-            
-            # سایر کال‌بک‌ها...
-            
-            # هندلر برای stateهای فیلتر کلمات
-            @self.bot.message_handler(func=lambda msg: True)
-            def handle_filter_states(msg):
-                uid = str(msg.chat.id)
-                if uid != self.owner:
-                    return
-                
-                db_u = self.db.read("users")
-                user = db_u["users"].get(uid, {})
-                admin_state = user.get("admin_state")
-                
-                if admin_state == "add_filter_word":
-                    word = msg.text.strip()
-                    if self.add_filter_word(word):
-                        self.bot.send_message(uid, f"✅ کلمه '{word}' به فیلتر اضافه شد.")
-                    else:
-                        self.bot.send_message(uid, f"❌ کلمه '{word}' قبلاً در فیلتر وجود دارد.")
-                    
-                    user["admin_state"] = None
-                    self.db.write("users", db_u)
-                
-                elif admin_state == "remove_filter_word":
-                    word = msg.text.strip()
-                    if self.remove_filter_word(word):
-                        self.bot.send_message(uid, f"✅ کلمه '{word}' از فیلتر حذف شد.")
-                    else:
-                        self.bot.send_message(uid, f"❌ کلمه '{word}' در فیلتر وجود ندارد.")
-                    
-                    user["admin_state"] = None
-                    self.db.write("users", db_u)
 
-        # هندلرهای اصلی باقی می‌مانند (همان کد قبلی)
-        # برای جلوگیری از طولانی شدن کد، هندلرهای اصلی حذف نشده‌اند
-        # فقط تغییرات لازم اعمال شده‌اند
+        elif call.data == "view_missions_list":
+            if uid != self.owner:
+                return
+            
+            db_m = self.db.read("missions")
+            missions_text = "<b>📋 لیست کامل ماموریت‌ها</b>\n\n"
+            
+            for i, m in enumerate(db_m["available"], 1):
+                missions_text += f"<b>{i}. {m['name']}</b>\n"
+                
+                if m.get("reward_type") == "coins":
+                    missions_text += f"   🎁 پاداش: {m.get('reward_value', m.get('reward', 0)):,} سکه\n"
+                elif m.get("reward_type") == "vip":
+                    duration_name = {
+                        "week": "۱ هفته",
+                        "month": "۱ ماه",
+                        "3month": "۳ ماه",
+                        "6month": "۶ ماه",
+                        "year": "۱ سال"
+                    }.get(m.get("reward_value", "week"), "VIP")
+                    missions_text += f"   🎖 پاداش: VIP {duration_name}\n"
+                else:
+                    missions_text += f"   🎁 پاداش: {m.get('reward', 0):,} سکه\n"
+                
+                missions_text += f"   📝 کار: {m.get('description', self.get_mission_description(m['type'], m['target']))}\n"
+                missions_text += f"   🎯 نوع: {m['type']}\n"
+                missions_text += f"   🎯 هدف: {m['target']}\n\n"
+            
+            self.bot.send_message(uid, missions_text)
+            self.bot.answer_callback_query(call.id, "✅ لیست ارسال شد")
 
+        elif call.data == "add_new_mission":
+            if uid != self.owner:
+                return
+            
+            user["admin_state"] = "add_mission_reward_type"
+            self.db.write("users", db_u)
+            
+            kb = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+            kb.add("🎖 VIP", "💰 سکه", "🔙 بازگشت")
+            
+            self.bot.send_message(uid, "🎯 <b>افزودن ماموریت جدید</b>\n\n"
+                                      "نوع پاداش ماموریت را انتخاب کنید:", 
+                                reply_markup=kb)
+            self.bot.answer_callback_query(call.id, "✅")
+
+        elif call.data.startswith("extend_ban_"):
+            if uid != self.owner:
+                return
+            
+            target = call.data.split("_")[2]
+            user["admin_temp_ban_target"] = target
+            user["admin_state"] = "admin_temp_ban_minutes"
+            self.db.write("users", db_u)
+            
+            self.bot.send_message(uid, f"⏰ تعداد دقیقه برای تمدید بن کاربر {target}:")
+            self.bot.answer_callback_query(call.id, "✅")
+
+        # مدیریت هشدار تعمیر
+        elif call.data == "start_maintenance_warning":
+            if uid != self.owner:
+                return
+            
+            self.start_maintenance_warning(uid)
+            self.bot.edit_message_text("⚠️ <b>هشدار تعمیر فعال شد!</b>\n\n"
+                                      "هر 30 ثانیه پیام هشدار ارسال می‌شود.\n"
+                                      "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.\n\n"
+                                      "برای لغو روی '⚠️ هشدار تعمیر' کلیک کنید.", 
+                                      call.message.chat.id, call.message.message_id)
+            self.bot.answer_callback_query(call.id, "✅ هشدار فعال شد")
+
+        elif call.data == "cancel_maintenance":
+            if uid != self.owner:
+                return
+            
+            self.bot.edit_message_text("❌ <b>هشدار تعمیر لغو شد</b>\n\n"
+                                      "ربات به حالت عادی ادامه می‌دهد.", 
+                                      call.message.chat.id, call.message.message_id)
+            self.bot.answer_callback_query(call.id, "✅ لغو شد")
+
+        elif call.data == "cancel_maintenance_warning":
+            if uid != self.owner:
+                return
+            
+            kb = types.InlineKeyboardMarkup()
+            kb.add(
+                types.InlineKeyboardButton("✅ بله، لغو کن و عذرخواهی کن", callback_data="confirm_cancel_warning"),
+                types.InlineKeyboardButton("❌ خیر، ادامه بده", callback_data="continue_warning")
+            )
+            
+            self.bot.edit_message_text("⚠️ <b>لغو هشدار تعمیر</b>\n\n"
+                                      "آیا مطمئن هستید که می‌خواهید هشدار را لغو کنید؟\n\n"
+                                      "اگر لغو کنید:\n"
+                                      "• پیام عذرخواهی به کاربران ارسال می‌شود\n"
+                                      "• هشدارها متوقف می‌شوند\n"
+                                      "• ربات به حالت تعمیر نمی‌رود", 
+                                      call.message.chat.id, call.message.message_id, 
+                                      reply_markup=kb)
+            self.bot.answer_callback_query(call.id, "⚠️")
+
+        elif call.data == "confirm_cancel_warning":
+            if uid != self.owner:
+                return
+            
+            if self.cancel_maintenance_warning(uid):
+                self.bot.edit_message_text("✅ <b>هشدار تعمیر لغو شد</b>\n\n"
+                                          "پیام عذرخواهی به کاربران ارسال شد.\n"
+                                          "ربات به حالت عادی ادامه می‌دهد.", 
+                                          call.message.chat.id, call.message.message_id)
+                self.bot.answer_callback_query(call.id, "✅ لغو شد و عذرخواهی ارسال شد")
+            else:
+                self.bot.answer_callback_query(call.id, "❌ هشداری فعال نیست")
+
+        elif call.data == "continue_warning":
+            if uid != self.owner:
+                return
+            
+            self.bot.edit_message_text("⚠️ <b>هشدار تعمیر ادامه دارد</b>\n\n"
+                                      "هشدارها همچنان ارسال می‌شوند.\n"
+                                      "بعد از 3 دقیقه ربات به حالت تعمیر می‌رود.", 
+                                      call.message.chat.id, call.message.message_id)
+            self.bot.answer_callback_query(call.id, "✅ ادامه دارد")
+
+        elif call.data == "cancel_no":
+            if uid != self.owner:
+                return
+            
+            self.bot.answer_callback_query(call.id, "✅")
+    
     def run(self):
         """اجرای ربات"""
         print("=" * 50)
         print("Shadow Titan v42.0 - Ultimate Edition")
-        print("پنل مدیریت پیشرفته فعال شده است")
+        print("ربات در حال شروع...")
         print("=" * 50)
         
         try:
@@ -2388,43 +2365,18 @@ class ShadowTitanBot:
             print("✅ وب سرور روی پورت 8080 راه‌اندازی شد")
         except Exception as e:
             logger.error(f"خطای وب سرور: {e}")
+            print(f"⚠️ خطا در وب سرور: {e}")
 
-        # شروع مانیتورینگ خودکار
-        def auto_monitor():
-            while True:
-                try:
-                    # بررسی فعالیت مشکوک هر 30 دقیقه
-                    suspicious = self.check_suspicious_activity()
-                    if suspicious and self.owner:
-                        text = "⚠️ <b>فعالیت مشکوک شناسایی شد</b>\n\n"
-                        for item in suspicious[:5]:
-                            text += f"👤 کاربر: {item['user']}\n"
-                            text += f"📝 دلیل: {item['reason']}\n"
-                            text += f"🕐 زمان: {item['last_active']}\n\n"
-                        
-                        try:
-                            self.bot.send_message(self.owner, text)
-                        except:
-                            pass
-                    
-                    # بن الگوریتمی هر 1 ساعت
-                    self.algorithmic_ban()
-                    
-                    time.sleep(1800)  # 30 دقیقه
-                except Exception as e:
-                    logger.error(f"خطا در مانیتورینگ خودکار: {e}")
-                    time.sleep(300)  # 5 دقیقه در صورت خطا
-        
-        monitor_thread = threading.Thread(target=auto_monitor)
-        monitor_thread.daemon = True
-        monitor_thread.start()
-        
         try:
             print("🚀 در حال اتصال به تلگرام...")
-            self.bot.infinity_polling(skip_pending=True)
+            self.bot.infinity_polling(
+                skip_pending=True,
+                timeout=60,
+                long_polling_timeout=30
+            )
         except Exception as e:
             logger.error(f"خطای Polling: {e}")
-            print(f"❌ خطای Polling: {e}")
+            print(f"❌ خطای اتصال: {e}")
 
 if __name__ == "__main__":
     bot_instance = ShadowTitanBot()
