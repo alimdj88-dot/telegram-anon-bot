@@ -109,7 +109,7 @@ class DB:
 # ==========================================
 class ShadowTitanBot:
     def __init__(self):
-        self.token = "توکن_خودتو_اینجا_قرار_ده"  # 🔴 توکن خودت رو اینجا بذار
+        self.token = "8213706320:AAEXMsOv6lP-lvgyvaeGawJltv5zxM3bA6A" 
         self.owner = "8013245091"
         self.channel = "@ChatNaAnnouncements"
         self.support = "@its_alimo"
@@ -610,7 +610,6 @@ class ShadowTitanBot:
                     uid,
                     "📢 <b>اطلاعیه مهم</b" 
 
-                
                 )
             except Exception as e:
                 logger.error(f"خطا در ارسال پیام لغو به {uid}: {e}")
