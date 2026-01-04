@@ -159,7 +159,7 @@ class DB:
 # ==========================================
 class ShadowTitanBot:
     def __init__(self):
-        self.token = "8213706320:AAFnu2EgXqRf05dPuJE_RU0AlQcXQkNdRZI"
+        self.token = "8213706320:AAEXMsOv6lP-lvgyvaeGawJltv5zxM3bA6A"
         self.owner = "8013245091"
         self.channel = "@ChatNaAnnouncements"
         self.support = "@its_alimo"
