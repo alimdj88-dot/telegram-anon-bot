@@ -1,26 +1,31 @@
+#!/usr/bin/env python3
 """
-Telegram Anonymous Bot with Advanced Management Features
-Features: Events, VIP Tiers, Discounts, and Admin Panel
+Telegram Anonymous Bot - Enhanced Version
+Features: Anonymous messaging, VIP tiers, event management, and discount system
+Author: alimdj88-dot
 """
 
 import logging
 import sqlite3
-from datetime import datetime, timedelta
-from typing import List, Dict, Optional, Tuple
-from dataclasses import dataclass, asdict
-from enum import Enum
 import json
+import os
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+from enum import Enum
+from dataclasses import dataclass, asdict
+from contextlib import contextmanager
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, User as TelegramUser
 from telegram.ext import (
     Application,
     CommandHandler,
-    CallbackQueryHandler,
     MessageHandler,
-    ContextTypes,
-    filters,
+    CallbackQueryHandler,
     ConversationHandler,
+    filters,
+    ContextTypes,
 )
+from telegram.constants import ChatAction, ParseMode
 
 # Configure logging
 logging.basicConfig(
@@ -29,959 +34,977 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Database configuration
-DB_NAME = 'telegram_bot.db'
 
-# Conversation states
-class ConversationState(Enum):
-    """Conversation states for different flows"""
-    WAITING_EVENT_NAME = 1
-    WAITING_EVENT_DATE = 2
-    WAITING_EVENT_DESCRIPTION = 3
-    WAITING_VIP_TIER_NAME = 4
-    WAITING_VIP_TIER_BENEFITS = 5
-    WAITING_VIP_TIER_PRICE = 6
-    WAITING_DISCOUNT_NAME = 7
-    WAITING_DISCOUNT_PERCENTAGE = 8
-    WAITING_DISCOUNT_CODE = 9
-    WAITING_DISCOUNT_EXPIRY = 10
+# ============================================================================
+# Enums and Data Classes
+# ============================================================================
+
+class VIPTier(Enum):
+    """VIP tier levels"""
+    STANDARD = 0
+    SILVER = 1
+    GOLD = 2
+    PLATINUM = 3
 
 
-# Data Models
+class EventStatus(Enum):
+    """Event status types"""
+    DRAFT = "draft"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class DiscountType(Enum):
+    """Discount type options"""
+    PERCENTAGE = "percentage"
+    FIXED = "fixed"
+
+
+@dataclass
+class UserProfile:
+    """User profile data"""
+    user_id: int
+    username: str
+    vip_tier: int = VIPTier.STANDARD.value
+    messages_sent: int = 0
+    messages_received: int = 0
+    joined_date: str = None
+    total_spent: float = 0.0
+    
+    def __post_init__(self):
+        if self.joined_date is None:
+            self.joined_date = datetime.utcnow().isoformat()
+
+
 @dataclass
 class Event:
-    """Event data model"""
-    id: Optional[int] = None
-    name: str = ""
-    date: str = ""
-    description: str = ""
-    max_participants: int = 0
-    current_participants: int = 0
-    created_at: str = ""
-    updated_at: str = ""
-
-
-@dataclass
-class VIPTier:
-    """VIP Tier data model"""
-    id: Optional[int] = None
-    name: str = ""
-    benefits: str = ""
-    price: float = 0.0
-    max_members: int = 0
-    current_members: int = 0
-    created_at: str = ""
-    updated_at: str = ""
+    """Event data"""
+    event_id: int
+    title: str
+    description: str
+    creator_id: int
+    status: str = EventStatus.DRAFT.value
+    created_date: str = None
+    start_date: str = None
+    end_date: str = None
+    participants: int = 0
+    
+    def __post_init__(self):
+        if self.created_date is None:
+            self.created_date = datetime.utcnow().isoformat()
 
 
 @dataclass
 class Discount:
-    """Discount data model"""
-    id: Optional[int] = None
-    name: str = ""
-    code: str = ""
-    percentage: float = 0.0
-    max_uses: int = 0
+    """Discount data"""
+    discount_id: int
+    code: str
+    discount_type: str = DiscountType.PERCENTAGE.value
+    discount_value: float = 0.0
+    applicable_vip_tier: int = VIPTier.STANDARD.value
+    max_uses: int = -1  # -1 for unlimited
     current_uses: int = 0
-    expiry_date: str = ""
-    created_at: str = ""
-    updated_at: str = ""
+    expiry_date: str = None
+    active: bool = True
 
 
+# ============================================================================
 # Database Manager
+# ============================================================================
+
 class DatabaseManager:
-    """Handles all database operations"""
-
-    def __init__(self, db_name: str = DB_NAME):
-        self.db_name = db_name
+    """Manages SQLite database operations"""
+    
+    def __init__(self, db_path: str = "bot_data.db"):
+        self.db_path = db_path
         self.init_db()
-
+    
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Database error: {e}")
+            raise
+        finally:
+            conn.close()
+    
     def init_db(self):
-        """Initialize database tables"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-
-        # Users table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                telegram_id INTEGER UNIQUE NOT NULL,
-                username TEXT,
-                is_admin BOOLEAN DEFAULT 0,
-                is_vip BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # Events table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                date TEXT NOT NULL,
-                description TEXT,
-                max_participants INTEGER DEFAULT 0,
-                current_participants INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # VIP Tiers table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vip_tiers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                benefits TEXT,
-                price REAL NOT NULL,
-                max_members INTEGER DEFAULT 0,
-                current_members INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # Discounts table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS discounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                code TEXT NOT NULL UNIQUE,
-                percentage REAL NOT NULL,
-                max_uses INTEGER DEFAULT 0,
-                current_uses INTEGER DEFAULT 0,
-                expiry_date TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # Event Registrations table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS event_registrations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                event_id INTEGER NOT NULL,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (event_id) REFERENCES events(id),
-                UNIQUE(user_id, event_id)
-            )
-        ''')
-
-        # VIP Memberships table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vip_memberships (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                tier_id INTEGER NOT NULL,
-                expiry_date TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (tier_id) REFERENCES vip_tiers(id)
-            )
-        ''')
-
-        # Discount Usage table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS discount_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                discount_id INTEGER NOT NULL,
-                used_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (discount_id) REFERENCES discounts(id)
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
-
-    def execute_query(self, query: str, params: tuple = ()) -> List[Tuple]:
-        """Execute a SELECT query"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        result = cursor.fetchall()
-        conn.close()
-        return result
-
-    def execute_update(self, query: str, params: tuple = ()) -> int:
-        """Execute INSERT, UPDATE, or DELETE query"""
-        conn = sqlite3.connect(self.db_name)
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        last_id = cursor.lastrowid
-        conn.close()
-        return last_id
+        """Initialize database with required tables"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Users table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    vip_tier INTEGER DEFAULT 0,
+                    messages_sent INTEGER DEFAULT 0,
+                    messages_received INTEGER DEFAULT 0,
+                    joined_date TEXT,
+                    total_spent REAL DEFAULT 0.0,
+                    last_active TEXT
+                )
+            ''')
+            
+            # Messages table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS messages (
+                    message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER,
+                    recipient_id INTEGER,
+                    content TEXT,
+                    sent_date TEXT,
+                    is_read INTEGER DEFAULT 0,
+                    FOREIGN KEY(sender_id) REFERENCES users(user_id),
+                    FOREIGN KEY(recipient_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Events table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    creator_id INTEGER,
+                    status TEXT DEFAULT 'draft',
+                    created_date TEXT,
+                    start_date TEXT,
+                    end_date TEXT,
+                    participants INTEGER DEFAULT 0,
+                    FOREIGN KEY(creator_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Event participants table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS event_participants (
+                    event_id INTEGER,
+                    user_id INTEGER,
+                    joined_date TEXT,
+                    PRIMARY KEY(event_id, user_id),
+                    FOREIGN KEY(event_id) REFERENCES events(event_id),
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Discounts table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS discounts (
+                    discount_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT UNIQUE NOT NULL,
+                    discount_type TEXT,
+                    discount_value REAL,
+                    applicable_vip_tier INTEGER,
+                    max_uses INTEGER DEFAULT -1,
+                    current_uses INTEGER DEFAULT 0,
+                    expiry_date TEXT,
+                    active INTEGER DEFAULT 1,
+                    created_date TEXT
+                )
+            ''')
+            
+            # Discount usage table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS discount_usage (
+                    usage_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discount_id INTEGER,
+                    user_id INTEGER,
+                    used_date TEXT,
+                    FOREIGN KEY(discount_id) REFERENCES discounts(discount_id),
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Create indexes for better performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_sender ON messages(sender_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_recipient ON messages(recipient_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_event_creator ON events(creator_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_discount_code ON discounts(code)')
+            
+            conn.commit()
+            logger.info(f"Database initialized at {self.db_path}")
 
 
+# ============================================================================
 # Event Manager
+# ============================================================================
+
 class EventManager:
-    """Manages event CRUD operations and admin controls"""
-
-    def __init__(self, db: DatabaseManager):
-        self.db = db
-
-    def create_event(self, name: str, date: str, description: str, max_participants: int = 0) -> int:
+    """Manages events and event participants"""
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+    
+    def create_event(self, title: str, description: str, creator_id: int,
+                    start_date: Optional[str] = None, end_date: Optional[str] = None) -> Optional[int]:
         """Create a new event"""
-        query = '''
-            INSERT INTO events (name, date, description, max_participants, current_participants)
-            VALUES (?, ?, ?, ?, 0)
-        '''
-        return self.db.execute_update(query, (name, date, description, max_participants))
-
-    def read_event(self, event_id: int) -> Optional[Event]:
-        """Get event by ID"""
-        query = 'SELECT * FROM events WHERE id = ?'
-        result = self.db.execute_query(query, (event_id,))
-        if result:
-            return self._map_to_event(result[0])
-        return None
-
-    def read_all_events(self, limit: int = 100, offset: int = 0) -> List[Event]:
-        """Get all events with pagination"""
-        query = 'SELECT * FROM events ORDER BY date DESC LIMIT ? OFFSET ?'
-        results = self.db.execute_query(query, (limit, offset))
-        return [self._map_to_event(row) for row in results]
-
-    def update_event(self, event_id: int, **kwargs) -> bool:
-        """Update event details"""
-        allowed_fields = {'name', 'date', 'description', 'max_participants'}
-        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
-        
-        if not updates:
-            return False
-
-        updates['updated_at'] = datetime.utcnow().isoformat()
-        set_clause = ', '.join([f'{k} = ?' for k in updates.keys()])
-        query = f'UPDATE events SET {set_clause} WHERE id = ?'
-        
-        self.db.execute_update(query, tuple(updates.values()) + (event_id,))
-        return True
-
-    def delete_event(self, event_id: int) -> bool:
-        """Delete an event"""
-        # Delete registrations first
-        self.db.execute_update('DELETE FROM event_registrations WHERE event_id = ?', (event_id,))
-        # Delete event
-        self.db.execute_update('DELETE FROM events WHERE id = ?', (event_id,))
-        return True
-
-    def register_user(self, user_id: int, event_id: int) -> bool:
-        """Register user for event"""
         try:
-            query = '''
-                INSERT INTO event_registrations (user_id, event_id)
-                VALUES (?, ?)
-            '''
-            self.db.execute_update(query, (user_id, event_id))
-            
-            # Update current participants
-            self.db.execute_update(
-                'UPDATE events SET current_participants = current_participants + 1 WHERE id = ?',
-                (event_id,)
-            )
-            return True
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO events (title, description, creator_id, created_date, start_date, end_date)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (title, description, creator_id, datetime.utcnow().isoformat(), start_date, end_date))
+                return cursor.lastrowid
+        except Exception as e:
+            logger.error(f"Error creating event: {e}")
+            return None
+    
+    def get_event(self, event_id: int) -> Optional[Event]:
+        """Get event details"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM events WHERE event_id = ?', (event_id,))
+                row = cursor.fetchone()
+                if row:
+                    return Event(**dict(row))
+        except Exception as e:
+            logger.error(f"Error fetching event: {e}")
+        return None
+    
+    def list_events(self, status: Optional[str] = None, limit: int = 10) -> List[Event]:
+        """List events"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                if status:
+                    cursor.execute('SELECT * FROM events WHERE status = ? ORDER BY created_date DESC LIMIT ?',
+                                 (status, limit))
+                else:
+                    cursor.execute('SELECT * FROM events ORDER BY created_date DESC LIMIT ?', (limit,))
+                return [Event(**dict(row)) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error listing events: {e}")
+            return []
+    
+    def update_event_status(self, event_id: int, status: str) -> bool:
+        """Update event status"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE events SET status = ? WHERE event_id = ?', (status, event_id))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error updating event status: {e}")
+            return False
+    
+    def join_event(self, event_id: int, user_id: int) -> bool:
+        """Add user to event"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO event_participants (event_id, user_id, joined_date)
+                    VALUES (?, ?, ?)
+                ''', (event_id, user_id, datetime.utcnow().isoformat()))
+                
+                # Update participant count
+                cursor.execute('UPDATE events SET participants = participants + 1 WHERE event_id = ?', (event_id,))
+                return True
         except sqlite3.IntegrityError:
-            return False  # Already registered
-
-    def unregister_user(self, user_id: int, event_id: int) -> bool:
-        """Unregister user from event"""
-        self.db.execute_update(
-            'DELETE FROM event_registrations WHERE user_id = ? AND event_id = ?',
-            (user_id, event_id)
-        )
-        # Update current participants
-        self.db.execute_update(
-            'UPDATE events SET current_participants = current_participants - 1 WHERE id = ?',
-            (event_id,)
-        )
-        return True
-
-    def get_event_participants(self, event_id: int) -> List[Dict]:
-        """Get all participants of an event"""
-        query = '''
-            SELECT u.telegram_id, u.username 
-            FROM event_registrations er
-            JOIN users u ON er.user_id = u.id
-            WHERE er.event_id = ?
-        '''
-        results = self.db.execute_query(query, (event_id,))
-        return [{'telegram_id': r[0], 'username': r[1]} for r in results]
-
-    @staticmethod
-    def _map_to_event(row: Tuple) -> Event:
-        """Map database row to Event object"""
-        return Event(
-            id=row[0],
-            name=row[1],
-            date=row[2],
-            description=row[3],
-            max_participants=row[4],
-            current_participants=row[5],
-            created_at=row[6],
-            updated_at=row[7]
-        )
+            logger.info(f"User {user_id} already joined event {event_id}")
+            return False
+        except Exception as e:
+            logger.error(f"Error joining event: {e}")
+            return False
+    
+    def get_event_participants(self, event_id: int) -> List[int]:
+        """Get list of participants in an event"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT user_id FROM event_participants WHERE event_id = ?', (event_id,))
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error fetching event participants: {e}")
+            return []
 
 
+# ============================================================================
 # VIP Tier Manager
+# ============================================================================
+
 class VIPTierManager:
-    """Manages VIP tier CRUD operations and admin controls"""
-
-    def __init__(self, db: DatabaseManager):
-        self.db = db
-
-    def create_tier(self, name: str, benefits: str, price: float, max_members: int = 0) -> int:
-        """Create a new VIP tier"""
-        query = '''
-            INSERT INTO vip_tiers (name, benefits, price, max_members, current_members)
-            VALUES (?, ?, ?, ?, 0)
-        '''
-        return self.db.execute_update(query, (name, benefits, price, max_members))
-
-    def read_tier(self, tier_id: int) -> Optional[VIPTier]:
-        """Get VIP tier by ID"""
-        query = 'SELECT * FROM vip_tiers WHERE id = ?'
-        result = self.db.execute_query(query, (tier_id,))
-        if result:
-            return self._map_to_tier(result[0])
-        return None
-
-    def read_tier_by_name(self, name: str) -> Optional[VIPTier]:
-        """Get VIP tier by name"""
-        query = 'SELECT * FROM vip_tiers WHERE name = ?'
-        result = self.db.execute_query(query, (name,))
-        if result:
-            return self._map_to_tier(result[0])
-        return None
-
-    def read_all_tiers(self, limit: int = 100, offset: int = 0) -> List[VIPTier]:
-        """Get all VIP tiers with pagination"""
-        query = 'SELECT * FROM vip_tiers ORDER BY price ASC LIMIT ? OFFSET ?'
-        results = self.db.execute_query(query, (limit, offset))
-        return [self._map_to_tier(row) for row in results]
-
-    def update_tier(self, tier_id: int, **kwargs) -> bool:
-        """Update VIP tier details"""
-        allowed_fields = {'name', 'benefits', 'price', 'max_members'}
-        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
-        
-        if not updates:
-            return False
-
-        updates['updated_at'] = datetime.utcnow().isoformat()
-        set_clause = ', '.join([f'{k} = ?' for k in updates.keys()])
-        query = f'UPDATE vip_tiers SET {set_clause} WHERE id = ?'
-        
-        self.db.execute_update(query, tuple(updates.values()) + (tier_id,))
-        return True
-
-    def delete_tier(self, tier_id: int) -> bool:
-        """Delete a VIP tier"""
-        # Delete memberships first
-        self.db.execute_update('DELETE FROM vip_memberships WHERE tier_id = ?', (tier_id,))
-        # Delete tier
-        self.db.execute_update('DELETE FROM vip_tiers WHERE id = ?', (tier_id,))
-        return True
-
-    def add_member(self, user_id: int, tier_id: int, expiry_days: int = 365) -> bool:
-        """Add user to VIP tier"""
+    """Manages VIP tiers and user progression"""
+    
+    # VIP tier requirements (in terms of messages sent)
+    TIER_THRESHOLDS = {
+        VIPTier.SILVER: 50,
+        VIPTier.GOLD: 150,
+        VIPTier.PLATINUM: 300,
+    }
+    
+    # VIP tier benefits
+    TIER_BENEFITS = {
+        VIPTier.STANDARD: {"message_limit": 10, "discount_percentage": 0},
+        VIPTier.SILVER: {"message_limit": 25, "discount_percentage": 5},
+        VIPTier.GOLD: {"message_limit": 50, "discount_percentage": 10},
+        VIPTier.PLATINUM: {"message_limit": -1, "discount_percentage": 20},  # Unlimited
+    }
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+    
+    def get_user_tier(self, user_id: int) -> VIPTier:
+        """Get user's current VIP tier"""
         try:
-            expiry_date = (datetime.utcnow() + timedelta(days=expiry_days)).isoformat()
-            query = '''
-                INSERT INTO vip_memberships (user_id, tier_id, expiry_date)
-                VALUES (?, ?, ?)
-            '''
-            self.db.execute_update(query, (user_id, tier_id, expiry_date))
-            
-            # Update current members
-            self.db.execute_update(
-                'UPDATE vip_tiers SET current_members = current_members + 1 WHERE id = ?',
-                (tier_id,)
-            )
-            
-            # Mark user as VIP
-            self.db.execute_update(
-                'UPDATE users SET is_vip = 1 WHERE id = ?',
-                (user_id,)
-            )
-            return True
-        except sqlite3.IntegrityError:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT vip_tier FROM users WHERE user_id = ?', (user_id,))
+                row = cursor.fetchone()
+                if row:
+                    return VIPTier(row[0])
+        except Exception as e:
+            logger.error(f"Error fetching user tier: {e}")
+        return VIPTier.STANDARD
+    
+    def promote_user(self, user_id: int, new_tier: VIPTier) -> bool:
+        """Promote user to a new VIP tier"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET vip_tier = ? WHERE user_id = ?', (new_tier.value, user_id))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error promoting user: {e}")
             return False
-
-    def remove_member(self, user_id: int, tier_id: int) -> bool:
-        """Remove user from VIP tier"""
-        self.db.execute_update(
-            'DELETE FROM vip_memberships WHERE user_id = ? AND tier_id = ?',
-            (user_id, tier_id)
-        )
-        # Update current members
-        self.db.execute_update(
-            'UPDATE vip_tiers SET current_members = current_members - 1 WHERE id = ?',
-            (tier_id,)
-        )
-        
-        # Check if user has any other VIP membership
-        result = self.db.execute_query(
-            'SELECT COUNT(*) FROM vip_memberships WHERE user_id = ?',
-            (user_id,)
-        )
-        if result[0][0] == 0:
-            self.db.execute_update(
-                'UPDATE users SET is_vip = 0 WHERE id = ?',
-                (user_id,)
-            )
-        return True
-
-    def get_tier_members(self, tier_id: int) -> List[Dict]:
-        """Get all members of a VIP tier"""
-        query = '''
-            SELECT u.telegram_id, u.username, vm.expiry_date
-            FROM vip_memberships vm
-            JOIN users u ON vm.user_id = u.id
-            WHERE vm.tier_id = ?
-        '''
-        results = self.db.execute_query(query, (tier_id,))
-        return [{'telegram_id': r[0], 'username': r[1], 'expiry_date': r[2]} for r in results]
-
-    @staticmethod
-    def _map_to_tier(row: Tuple) -> VIPTier:
-        """Map database row to VIPTier object"""
-        return VIPTier(
-            id=row[0],
-            name=row[1],
-            benefits=row[2],
-            price=row[3],
-            max_members=row[4],
-            current_members=row[5],
-            created_at=row[6],
-            updated_at=row[7]
-        )
+    
+    def check_and_update_tier(self, user_id: int) -> Tuple[bool, VIPTier]:
+        """Check if user qualifies for tier upgrade based on messages sent"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT messages_sent, vip_tier FROM users WHERE user_id = ?', (user_id,))
+                row = cursor.fetchone()
+                
+                if not row:
+                    return False, VIPTier.STANDARD
+                
+                messages_sent, current_tier = row[0], VIPTier(row[1])
+                
+                # Check for tier upgrade
+                for tier, threshold in sorted(self.TIER_THRESHOLDS.items(), key=lambda x: x[1]):
+                    if messages_sent >= threshold and tier.value > current_tier.value:
+                        self.promote_user(user_id, tier)
+                        return True, tier
+                
+                return False, current_tier
+        except Exception as e:
+            logger.error(f"Error checking tier: {e}")
+            return False, VIPTier.STANDARD
+    
+    def get_tier_benefits(self, tier: VIPTier) -> Dict:
+        """Get benefits for a VIP tier"""
+        return self.TIER_BENEFITS.get(tier, self.TIER_BENEFITS[VIPTier.STANDARD])
+    
+    def get_tier_name(self, tier: VIPTier) -> str:
+        """Get display name for a tier"""
+        names = {
+            VIPTier.STANDARD: "Standard",
+            VIPTier.SILVER: "Silver",
+            VIPTier.GOLD: "Gold",
+            VIPTier.PLATINUM: "Platinum",
+        }
+        return names.get(tier, "Unknown")
 
 
+# ============================================================================
 # Discount Manager
+# ============================================================================
+
 class DiscountManager:
-    """Manages discount CRUD operations and admin controls"""
+    """Manages discount codes and user redemptions"""
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+    
+    def create_discount(self, code: str, discount_type: str, discount_value: float,
+                       applicable_vip_tier: int = VIPTier.STANDARD.value,
+                       max_uses: int = -1, expiry_date: Optional[str] = None) -> Optional[int]:
+        """Create a new discount code"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO discounts (code, discount_type, discount_value, applicable_vip_tier, max_uses, expiry_date, created_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (code.upper(), discount_type, discount_value, applicable_vip_tier, max_uses, expiry_date, datetime.utcnow().isoformat()))
+                return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            logger.warning(f"Discount code {code} already exists")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating discount: {e}")
+            return None
+    
+    def validate_discount(self, code: str, user_id: int) -> Tuple[bool, str, Optional[float]]:
+        """Validate if a discount code is usable by the user"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get discount details
+                cursor.execute('SELECT * FROM discounts WHERE code = ?', (code.upper(),))
+                discount_row = cursor.fetchone()
+                
+                if not discount_row:
+                    return False, "Discount code not found", None
+                
+                discount = dict(discount_row)
+                
+                if not discount['active']:
+                    return False, "Discount code is inactive", None
+                
+                # Check expiry
+                if discount['expiry_date']:
+                    if datetime.fromisoformat(discount['expiry_date']) < datetime.utcnow():
+                        return False, "Discount code has expired", None
+                
+                # Check max uses
+                if discount['max_uses'] != -1 and discount['current_uses'] >= discount['max_uses']:
+                    return False, "Discount code has reached maximum uses", None
+                
+                # Check VIP tier requirement
+                cursor.execute('SELECT vip_tier FROM users WHERE user_id = ?', (user_id,))
+                user_row = cursor.fetchone()
+                if user_row and user_row[0] < discount['applicable_vip_tier']:
+                    return False, f"You need at least {VIPTier(discount['applicable_vip_tier']).name} tier", None
+                
+                return True, "Valid", discount['discount_value']
+        except Exception as e:
+            logger.error(f"Error validating discount: {e}")
+            return False, "Error validating discount", None
+    
+    def redeem_discount(self, code: str, user_id: int) -> bool:
+        """Redeem a discount code for a user"""
+        try:
+            is_valid, message, _ = self.validate_discount(code, user_id)
+            if not is_valid:
+                return False
+            
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Get discount ID
+                cursor.execute('SELECT discount_id FROM discounts WHERE code = ?', (code.upper(),))
+                discount_row = cursor.fetchone()
+                
+                if discount_row:
+                    discount_id = discount_row[0]
+                    
+                    # Record usage
+                    cursor.execute('''
+                        INSERT INTO discount_usage (discount_id, user_id, used_date)
+                        VALUES (?, ?, ?)
+                    ''', (discount_id, user_id, datetime.utcnow().isoformat()))
+                    
+                    # Update usage count
+                    cursor.execute('UPDATE discounts SET current_uses = current_uses + 1 WHERE discount_id = ?', (discount_id,))
+                    return True
+        except Exception as e:
+            logger.error(f"Error redeeming discount: {e}")
+        return False
+    
+    def get_discount(self, code: str) -> Optional[Dict]:
+        """Get discount details"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM discounts WHERE code = ?', (code.upper(),))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Error fetching discount: {e}")
+            return None
+    
+    def list_active_discounts(self, limit: int = 10) -> List[Dict]:
+        """List active discount codes"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT * FROM discounts WHERE active = 1 
+                    ORDER BY created_date DESC LIMIT ?
+                ''', (limit,))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error listing discounts: {e}")
+            return []
 
-    def __init__(self, db: DatabaseManager):
-        self.db = db
 
-    def create_discount(self, name: str, code: str, percentage: float, max_uses: int, expiry_date: str) -> int:
-        """Create a new discount"""
-        query = '''
-            INSERT INTO discounts (name, code, percentage, max_uses, current_uses, expiry_date)
-            VALUES (?, ?, ?, ?, 0, ?)
-        '''
-        return self.db.execute_update(query, (name, code, percentage, max_uses, expiry_date))
+# ============================================================================
+# User Manager
+# ============================================================================
 
-    def read_discount(self, discount_id: int) -> Optional[Discount]:
-        """Get discount by ID"""
-        query = 'SELECT * FROM discounts WHERE id = ?'
-        result = self.db.execute_query(query, (discount_id,))
-        if result:
-            return self._map_to_discount(result[0])
+class UserManager:
+    """Manages user profiles and statistics"""
+    
+    def __init__(self, db_manager: DatabaseManager):
+        self.db = db_manager
+    
+    def create_user(self, user_id: int, username: str) -> bool:
+        """Create new user profile"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO users (user_id, username, joined_date, last_active)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, username, datetime.utcnow().isoformat(), datetime.utcnow().isoformat()))
+                return True
+        except sqlite3.IntegrityError:
+            logger.info(f"User {user_id} already exists")
+            return False
+        except Exception as e:
+            logger.error(f"Error creating user: {e}")
+            return False
+    
+    def get_user(self, user_id: int) -> Optional[UserProfile]:
+        """Get user profile"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+                row = cursor.fetchone()
+                if row:
+                    return UserProfile(**dict(row))
+        except Exception as e:
+            logger.error(f"Error fetching user: {e}")
         return None
-
-    def read_discount_by_code(self, code: str) -> Optional[Discount]:
-        """Get discount by code"""
-        query = 'SELECT * FROM discounts WHERE code = ?'
-        result = self.db.execute_query(query, (code,))
-        if result:
-            return self._map_to_discount(result[0])
-        return None
-
-    def read_all_discounts(self, limit: int = 100, offset: int = 0) -> List[Discount]:
-        """Get all discounts with pagination"""
-        query = 'SELECT * FROM discounts ORDER BY created_at DESC LIMIT ? OFFSET ?'
-        results = self.db.execute_query(query, (limit, offset))
-        return [self._map_to_discount(row) for row in results]
-
-    def update_discount(self, discount_id: int, **kwargs) -> bool:
-        """Update discount details"""
-        allowed_fields = {'name', 'code', 'percentage', 'max_uses', 'expiry_date'}
-        updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
-        
-        if not updates:
+    
+    def update_last_active(self, user_id: int) -> bool:
+        """Update user's last active timestamp"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET last_active = ? WHERE user_id = ?',
+                             (datetime.utcnow().isoformat(), user_id))
+                return True
+        except Exception as e:
+            logger.error(f"Error updating last active: {e}")
+            return False
+    
+    def increment_messages_sent(self, user_id: int) -> bool:
+        """Increment messages sent count"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET messages_sent = messages_sent + 1 WHERE user_id = ?', (user_id,))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error incrementing messages sent: {e}")
+            return False
+    
+    def increment_messages_received(self, user_id: int) -> bool:
+        """Increment messages received count"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET messages_received = messages_received + 1 WHERE user_id = ?', (user_id,))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error incrementing messages received: {e}")
             return False
 
-        updates['updated_at'] = datetime.utcnow().isoformat()
-        set_clause = ', '.join([f'{k} = ?' for k in updates.keys()])
-        query = f'UPDATE discounts SET {set_clause} WHERE id = ?'
-        
-        self.db.execute_update(query, tuple(updates.values()) + (discount_id,))
-        return True
 
-    def delete_discount(self, discount_id: int) -> bool:
-        """Delete a discount"""
-        # Delete usage records first
-        self.db.execute_update('DELETE FROM discount_usage WHERE discount_id = ?', (discount_id,))
-        # Delete discount
-        self.db.execute_update('DELETE FROM discounts WHERE id = ?', (discount_id,))
-        return True
+# ============================================================================
+# Message Manager
+# ============================================================================
 
-    def apply_discount(self, user_id: int, discount_id: int) -> Tuple[bool, str]:
-        """Apply discount for user"""
-        discount = self.read_discount(discount_id)
-        if not discount:
-            return False, "Discount not found"
-
-        # Check expiry
-        if datetime.fromisoformat(discount.expiry_date) < datetime.utcnow():
-            return False, "Discount has expired"
-
-        # Check max uses
-        if discount.current_uses >= discount.max_uses > 0:
-            return False, "Discount usage limit reached"
-
-        # Record usage
-        query = '''
-            INSERT INTO discount_usage (user_id, discount_id)
-            VALUES (?, ?)
-        '''
+class MessageManager:
+    """Manages anonymous messages"""
+    
+    def __init__(self, db_manager: DatabaseManager, user_manager: UserManager, vip_manager: VIPTierManager):
+        self.db = db_manager
+        self.user_manager = user_manager
+        self.vip_manager = vip_manager
+    
+    def send_message(self, sender_id: int, recipient_id: int, content: str) -> Optional[int]:
+        """Send anonymous message"""
         try:
-            self.db.execute_update(query, (user_id, discount_id))
+            # Check rate limiting based on VIP tier
+            sender = self.user_manager.get_user(sender_id)
+            if sender:
+                tier = self.vip_manager.get_user_tier(sender_id)
+                benefits = self.vip_manager.get_tier_benefits(tier)
+                limit = benefits['message_limit']
+                
+                if limit != -1 and sender.messages_sent >= limit:
+                    return None  # Rate limit exceeded
             
-            # Update current uses
-            self.db.execute_update(
-                'UPDATE discounts SET current_uses = current_uses + 1 WHERE id = ?',
-                (discount_id,)
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO messages (sender_id, recipient_id, content, sent_date)
+                    VALUES (?, ?, ?, ?)
+                ''', (sender_id, recipient_id, content, datetime.utcnow().isoformat()))
+                
+                message_id = cursor.lastrowid
+                
+                # Update user statistics
+                self.user_manager.increment_messages_sent(sender_id)
+                self.user_manager.increment_messages_received(recipient_id)
+                
+                # Check for VIP tier upgrade
+                self.vip_manager.check_and_update_tier(sender_id)
+                
+                return message_id
+        except Exception as e:
+            logger.error(f"Error sending message: {e}")
+            return None
+    
+    def get_messages(self, user_id: int, limit: int = 20) -> List[Dict]:
+        """Get received messages for user"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT message_id, sender_id, content, sent_date, is_read
+                    FROM messages
+                    WHERE recipient_id = ?
+                    ORDER BY sent_date DESC
+                    LIMIT ?
+                ''', (user_id, limit))
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error fetching messages: {e}")
+            return []
+    
+    def mark_as_read(self, message_id: int) -> bool:
+        """Mark message as read"""
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE messages SET is_read = 1 WHERE message_id = ?', (message_id,))
+                return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error marking message as read: {e}")
+            return False
+
+
+# ============================================================================
+# Bot Commands and Handlers
+# ============================================================================
+
+class AnonymousBotManager:
+    """Main bot manager class"""
+    
+    def __init__(self, token: str):
+        self.token = token
+        self.db = DatabaseManager()
+        self.user_manager = UserManager(self.db)
+        self.vip_manager = VIPTierManager(self.db)
+        self.message_manager = MessageManager(self.db, self.user_manager, self.vip_manager)
+        self.event_manager = EventManager(self.db)
+        self.discount_manager = DiscountManager(self.db)
+    
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Start command handler"""
+        user = update.effective_user
+        
+        # Create user if doesn't exist
+        self.user_manager.create_user(user.id, user.username or user.first_name)
+        self.user_manager.update_last_active(user.id)
+        
+        welcome_message = (
+            f"🎭 Welcome to Anonymous Bot, {user.first_name}!\n\n"
+            f"This bot allows you to send and receive anonymous messages.\n\n"
+            f"📋 Available Commands:\n"
+            f"/send - Send an anonymous message\n"
+            f"/messages - View your messages\n"
+            f"/profile - View your profile\n"
+            f"/vip - Check VIP tier info\n"
+            f"/events - View events\n"
+            f"/discount - Redeem discount codes\n"
+            f"/help - Get help\n"
+        )
+        
+        await update.message.reply_text(welcome_message)
+        return ConversationHandler.END
+    
+    async def send_message_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Start message sending flow"""
+        user = update.effective_user
+        self.user_manager.update_last_active(user.id)
+        
+        await update.message.reply_text("Enter the user ID of the recipient:")
+        return 1  # Expecting recipient ID
+    
+    async def send_message_recipient(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Get recipient ID"""
+        try:
+            recipient_id = int(update.message.text)
+            context.user_data['recipient_id'] = recipient_id
+            
+            # Check if recipient exists
+            recipient = self.user_manager.get_user(recipient_id)
+            if not recipient:
+                await update.message.reply_text("Recipient not found. Please enter a valid user ID.")
+                return 1
+            
+            await update.message.reply_text("Now send your message (keep it respectful):")
+            return 2  # Expecting message content
+        except ValueError:
+            await update.message.reply_text("Invalid user ID. Please enter a valid number.")
+            return 1
+    
+    async def send_message_content(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Send the message"""
+        sender_id = update.effective_user.id
+        recipient_id = context.user_data.get('recipient_id')
+        content = update.message.text
+        
+        # Check for rate limiting
+        sender = self.user_manager.get_user(sender_id)
+        tier = self.vip_manager.get_user_tier(sender_id)
+        benefits = self.vip_manager.get_tier_benefits(tier)
+        
+        if benefits['message_limit'] != -1 and sender.messages_sent >= benefits['message_limit']:
+            await update.message.reply_text(
+                f"⛔ You've reached your message limit for today.\n"
+                f"Your tier: {self.vip_manager.get_tier_name(tier)}\n"
+                f"Upgrade to VIP for more messages!"
             )
-            return True, f"Discount applied: {discount.percentage}% off"
-        except sqlite3.IntegrityError:
-            return False, "Error applying discount"
-
-    def get_discount_usage(self, discount_id: int) -> List[Dict]:
-        """Get all users who used a discount"""
-        query = '''
-            SELECT u.telegram_id, u.username, du.used_at
-            FROM discount_usage du
-            JOIN users u ON du.user_id = u.id
-            WHERE du.discount_id = ?
-        '''
-        results = self.db.execute_query(query, (discount_id,))
-        return [{'telegram_id': r[0], 'username': r[1], 'used_at': r[2]} for r in results]
-
-    def is_valid_discount(self, code: str) -> Tuple[bool, Optional[Discount]]:
-        """Check if discount code is valid"""
-        discount = self.read_discount_by_code(code)
-        if not discount:
-            return False, None
-
-        # Check expiry
-        if datetime.fromisoformat(discount.expiry_date) < datetime.utcnow():
-            return False, None
-
-        # Check max uses
-        if discount.current_uses >= discount.max_uses > 0:
-            return False, None
-
-        return True, discount
-
-    @staticmethod
-    def _map_to_discount(row: Tuple) -> Discount:
-        """Map database row to Discount object"""
-        return Discount(
-            id=row[0],
-            name=row[1],
-            code=row[2],
-            percentage=row[3],
-            max_uses=row[4],
-            current_uses=row[5],
-            expiry_date=row[6],
-            created_at=row[7],
-            updated_at=row[8]
+            return ConversationHandler.END
+        
+        message_id = self.message_manager.send_message(sender_id, recipient_id, content)
+        
+        if message_id:
+            await update.message.reply_text(
+                f"✅ Message sent successfully!\n"
+                f"Message ID: {message_id}"
+            )
+        else:
+            await update.message.reply_text("❌ Failed to send message. Please try again.")
+        
+        return ConversationHandler.END
+    
+    async def view_messages(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """View received messages"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        messages = self.message_manager.get_messages(user_id, limit=5)
+        
+        if not messages:
+            await update.message.reply_text("📭 You have no messages yet.")
+            return
+        
+        message_text = "📬 Your Messages:\n\n"
+        for msg in messages:
+            read_status = "✅ Read" if msg['is_read'] else "🆕 New"
+            message_text += f"From: Anonymous (ID: {msg['sender_id']})\n"
+            message_text += f"Status: {read_status}\n"
+            message_text += f"Message: {msg['content']}\n"
+            message_text += f"Time: {msg['sent_date']}\n"
+            message_text += "-" * 40 + "\n"
+        
+        await update.message.reply_text(message_text)
+    
+    async def view_profile(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """View user profile"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        user = self.user_manager.get_user(user_id)
+        tier = self.vip_manager.get_user_tier(user_id)
+        
+        if not user:
+            await update.message.reply_text("Profile not found.")
+            return
+        
+        tier_name = self.vip_manager.get_tier_name(tier)
+        benefits = self.vip_manager.get_tier_benefits(tier)
+        
+        profile_text = (
+            f"👤 User Profile\n\n"
+            f"Username: {user.username}\n"
+            f"User ID: {user_id}\n"
+            f"VIP Tier: {tier_name}\n"
+            f"Messages Sent: {user.messages_sent}\n"
+            f"Messages Received: {user.messages_received}\n"
+            f"Joined: {user.joined_date}\n"
+            f"Total Spent: ${user.total_spent:.2f}\n\n"
+            f"💎 Current Benefits:\n"
+            f"Message Limit: {benefits['message_limit'] if benefits['message_limit'] != -1 else 'Unlimited'}\n"
+            f"Discount: {benefits['discount_percentage']}%\n"
         )
-
-
-# Admin UI Callbacks
-async def show_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display admin menu"""
-    keyboard = [
-        [InlineKeyboardButton("📅 Manage Events", callback_data="admin_events")],
-        [InlineKeyboardButton("👑 Manage VIP Tiers", callback_data="admin_vip_tiers")],
-        [InlineKeyboardButton("🏷️ Manage Discounts", callback_data="admin_discounts")],
-        [InlineKeyboardButton("❌ Close Menu", callback_data="admin_close")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(profile_text)
     
-    await update.callback_query.edit_message_text(
-        text="🔧 *Admin Control Panel*\n\nSelect an option to manage:",
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
-    )
-
-
-async def show_events_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show events management menu"""
-    db = context.bot_data['db']
-    event_manager = context.bot_data['event_manager']
+    async def vip_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show VIP tier information"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        user = self.user_manager.get_user(user_id)
+        current_tier = self.vip_manager.get_user_tier(user_id)
+        
+        vip_text = "💎 VIP Tier System\n\n"
+        
+        for tier in VIPTier:
+            benefits = self.vip_manager.get_tier_benefits(tier)
+            tier_name = self.vip_manager.get_tier_name(tier)
+            
+            if tier == current_tier:
+                vip_text += f"✅ {tier_name} (Current)\n"
+            else:
+                threshold = self.vip_manager.TIER_THRESHOLDS.get(tier, 0)
+                vip_text += f"🔒 {tier_name} (Requires {threshold} messages)\n"
+            
+            vip_text += f"  - Message Limit: {benefits['message_limit'] if benefits['message_limit'] != -1 else 'Unlimited'}\n"
+            vip_text += f"  - Discount: {benefits['discount_percentage']}%\n\n"
+        
+        if user:
+            vip_text += f"Your Progress: {user.messages_sent} messages sent"
+        
+        await update.message.reply_text(vip_text)
     
-    events = event_manager.read_all_events(limit=5)
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Create Event", callback_data="event_create")],
-        [InlineKeyboardButton("📖 View Events", callback_data="event_list")],
-        [InlineKeyboardButton("🔄 Back", callback_data="admin_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = "*📅 Event Management*\n\n"
-    if events:
-        text += f"Active Events ({len(events)}):\n"
+    async def events_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """List active events"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        events = self.event_manager.list_events(status=EventStatus.ACTIVE.value, limit=5)
+        
+        if not events:
+            await update.message.reply_text("📭 No active events at the moment.")
+            return
+        
+        events_text = "📅 Active Events:\n\n"
         for event in events:
-            text += f"• {event.name} - {event.date}\n"
-    else:
-        text += "No events yet.\n"
+            events_text += f"Event ID: {event.event_id}\n"
+            events_text += f"Title: {event.title}\n"
+            events_text += f"Description: {event.description}\n"
+            events_text += f"Participants: {event.participants}\n"
+            events_text += "-" * 40 + "\n"
+        
+        await update.message.reply_text(events_text)
     
-    await update.callback_query.edit_message_text(
-        text=text,
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_EVENT_NAME.value
-
-
-async def create_event_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start creating new event"""
-    await update.callback_query.edit_message_text(
-        text="📝 Enter event name:",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_EVENT_NAME.value
-
-
-async def event_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle event name input"""
-    context.user_data['event_name'] = update.message.text
-    await update.message.reply_text("📅 Enter event date (YYYY-MM-DD):")
-    return ConversationState.WAITING_EVENT_DATE.value
-
-
-async def event_date_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle event date input"""
-    context.user_data['event_date'] = update.message.text
-    await update.message.reply_text("📖 Enter event description:")
-    return ConversationState.WAITING_EVENT_DESCRIPTION.value
-
-
-async def event_description_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle event description and save"""
-    event_manager = context.bot_data['event_manager']
+    async def redeem_discount(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Start discount redemption"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        await update.message.reply_text("Enter your discount code:")
+        return 1
     
-    event_id = event_manager.create_event(
-        name=context.user_data['event_name'],
-        date=context.user_data['event_date'],
-        description=update.message.text
-    )
+    async def process_discount(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        """Process discount code"""
+        user_id = update.effective_user.id
+        code = update.message.text.strip()
+        
+        is_valid, message, discount_value = self.discount_manager.validate_discount(code, user_id)
+        
+        if is_valid:
+            # Redeem the discount
+            self.discount_manager.redeem_discount(code, user_id)
+            await update.message.reply_text(
+                f"✅ Discount redeemed successfully!\n"
+                f"Discount Value: {discount_value}\n"
+                f"Thank you for your purchase!"
+            )
+        else:
+            await update.message.reply_text(f"❌ {message}")
+        
+        return ConversationHandler.END
     
-    await update.message.reply_text(
-        f"✅ Event '{context.user_data['event_name']}' created successfully!\nEvent ID: {event_id}",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    
-    context.user_data.clear()
-
-
-async def show_vip_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show VIP tiers management menu"""
-    vip_manager = context.bot_data['vip_manager']
-    tiers = vip_manager.read_all_tiers(limit=5)
-    
-    keyboard = [
-        [InlineKeyboardButton("➕ Create Tier", callback_data="vip_create")],
-        [InlineKeyboardButton("📖 View Tiers", callback_data="vip_list")],
-        [InlineKeyboardButton("🔄 Back", callback_data="admin_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = "*👑 VIP Tier Management*\n\n"
-    if tiers:
-        text += f"Active Tiers ({len(tiers)}):\n"
-        for tier in tiers:
-            text += f"• {tier.name} - ${tier.price}\n"
-    else:
-        text += "No VIP tiers yet.\n"
-    
-    await update.callback_query.edit_message_text(
-        text=text,
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_VIP_TIER_NAME.value
-
-
-async def create_vip_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start creating new VIP tier"""
-    await update.callback_query.edit_message_text(
-        text="👑 Enter VIP tier name:",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_VIP_TIER_NAME.value
-
-
-async def vip_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle VIP tier name input"""
-    context.user_data['vip_name'] = update.message.text
-    await update.message.reply_text("📝 Enter tier benefits (comma-separated):")
-    return ConversationState.WAITING_VIP_TIER_BENEFITS.value
-
-
-async def vip_benefits_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle VIP tier benefits input"""
-    context.user_data['vip_benefits'] = update.message.text
-    await update.message.reply_text("💰 Enter tier price (USD):")
-    return ConversationState.WAITING_VIP_TIER_PRICE.value
-
-
-async def vip_price_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle VIP tier price and save"""
-    vip_manager = context.bot_data['vip_manager']
-    
-    try:
-        price = float(update.message.text)
-        tier_id = vip_manager.create_tier(
-            name=context.user_data['vip_name'],
-            benefits=context.user_data['vip_benefits'],
-            price=price
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show help information"""
+        user_id = update.effective_user.id
+        self.user_manager.update_last_active(user_id)
+        
+        help_text = (
+            "ℹ️ Bot Help\n\n"
+            "🔹 /start - Initialize the bot\n"
+            "🔹 /send - Send an anonymous message\n"
+            "🔹 /messages - View your received messages\n"
+            "🔹 /profile - View your profile\n"
+            "🔹 /vip - Check VIP tier information\n"
+            "🔹 /events - View active events\n"
+            "🔹 /discount - Redeem a discount code\n"
+            "🔹 /help - Show this help message\n\n"
+            "📌 Features:\n"
+            "• Send anonymous messages\n"
+            "• Track message statistics\n"
+            "• VIP tier system with benefits\n"
+            "• Event management\n"
+            "• Discount code system\n"
+            "• Automatic tier promotion\n"
         )
         
-        await update.message.reply_text(
-            f"✅ VIP tier '{context.user_data['vip_name']}' created successfully!\nTier ID: {tier_id}",
-            parse_mode=ParseMode.MARKDOWN
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Invalid price. Please enter a valid number.")
+        await update.message.reply_text(help_text)
     
-    context.user_data.clear()
-
-
-async def show_discounts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Show discounts management menu"""
-    discount_manager = context.bot_data['discount_manager']
-    discounts = discount_manager.read_all_discounts(limit=5)
+    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle errors"""
+        logger.error(f"Exception while handling an update: {context.error}")
     
-    keyboard = [
-        [InlineKeyboardButton("➕ Create Discount", callback_data="discount_create")],
-        [InlineKeyboardButton("📖 View Discounts", callback_data="discount_list")],
-        [InlineKeyboardButton("🔄 Back", callback_data="admin_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = "*🏷️ Discount Management*\n\n"
-    if discounts:
-        text += f"Active Discounts ({len(discounts)}):\n"
-        for discount in discounts:
-            text += f"• {discount.code} - {discount.percentage}% off\n"
-    else:
-        text += "No discounts yet.\n"
-    
-    await update.callback_query.edit_message_text(
-        text=text,
-        reply_markup=reply_markup,
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_DISCOUNT_NAME.value
-
-
-async def create_discount_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Start creating new discount"""
-    await update.callback_query.edit_message_text(
-        text="🏷️ Enter discount name:",
-        parse_mode=ParseMode.MARKDOWN
-    )
-    return ConversationState.WAITING_DISCOUNT_NAME.value
-
-
-async def discount_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle discount name input"""
-    context.user_data['discount_name'] = update.message.text
-    await update.message.reply_text("🔤 Enter discount code:")
-    return ConversationState.WAITING_DISCOUNT_CODE.value
-
-
-async def discount_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle discount code input"""
-    context.user_data['discount_code'] = update.message.text.upper()
-    await update.message.reply_text("📊 Enter discount percentage:")
-    return ConversationState.WAITING_DISCOUNT_PERCENTAGE.value
-
-
-async def discount_percentage_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle discount percentage input"""
-    try:
-        context.user_data['discount_percentage'] = float(update.message.text)
-        await update.message.reply_text("📅 Enter expiry date (YYYY-MM-DD):")
-        return ConversationState.WAITING_DISCOUNT_EXPIRY.value
-    except ValueError:
-        await update.message.reply_text("❌ Invalid percentage. Please enter a valid number.")
-        return ConversationState.WAITING_DISCOUNT_PERCENTAGE.value
-
-
-async def discount_expiry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle discount expiry and save"""
-    discount_manager = context.bot_data['discount_manager']
-    
-    try:
-        discount_id = discount_manager.create_discount(
-            name=context.user_data['discount_name'],
-            code=context.user_data['discount_code'],
-            percentage=context.user_data['discount_percentage'],
-            max_uses=0,  # Unlimited
-            expiry_date=update.message.text
+    def run(self):
+        """Start the bot"""
+        app = Application.builder().token(self.token).build()
+        
+        # Command handlers
+        app.add_handler(CommandHandler("start", self.start))
+        app.add_handler(CommandHandler("profile", self.view_profile))
+        app.add_handler(CommandHandler("vip", self.vip_info))
+        app.add_handler(CommandHandler("messages", self.view_messages))
+        app.add_handler(CommandHandler("events", self.events_list))
+        app.add_handler(CommandHandler("help", self.help_command))
+        
+        # Conversation handlers
+        send_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("send", self.send_message_start)],
+            states={
+                1: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.send_message_recipient)],
+                2: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.send_message_content)],
+            },
+            fallbacks=[CommandHandler("help", self.help_command)],
         )
         
-        await update.message.reply_text(
-            f"✅ Discount '{context.user_data['discount_code']}' created successfully!\nDiscount ID: {discount_id}",
-            parse_mode=ParseMode.MARKDOWN
+        discount_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("discount", self.redeem_discount)],
+            states={
+                1: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.process_discount)],
+            },
+            fallbacks=[CommandHandler("help", self.help_command)],
         )
-    except ValueError:
-        await update.message.reply_text("❌ Invalid date format. Please use YYYY-MM-DD.")
-    
-    context.user_data.clear()
+        
+        app.add_handler(send_conv_handler)
+        app.add_handler(discount_conv_handler)
+        
+        # Error handler
+        app.add_error_handler(self.error_handler)
+        
+        logger.info("Bot started successfully")
+        app.run_polling()
 
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handle all button callbacks"""
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "admin_menu":
-        await show_admin_menu(update, context)
-    elif query.data == "admin_events":
-        return await show_events_menu(update, context)
-    elif query.data == "event_create":
-        return await create_event_handler(update, context)
-    elif query.data == "admin_vip_tiers":
-        return await show_vip_menu(update, context)
-    elif query.data == "vip_create":
-        return await create_vip_handler(update, context)
-    elif query.data == "admin_discounts":
-        return await show_discounts_menu(update, context)
-    elif query.data == "discount_create":
-        return await create_discount_handler(update, context)
-    elif query.data == "admin_close":
-        await query.delete_message()
-    
-    return ConversationHandler.END
+# ============================================================================
+# Main Entry Point
+# ============================================================================
 
-
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /start command"""
-    keyboard = [
-        [InlineKeyboardButton("🔧 Admin Panel", callback_data="admin_menu")],
-        [InlineKeyboardButton("📅 View Events", callback_data="view_events")],
-        [InlineKeyboardButton("👑 VIP Membership", callback_data="view_vip")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+def main():
+    """Main entry point"""
+    # Get bot token from environment variable
+    token = os.getenv('TELEGRAM_BOT_TOKEN')
     
-    await update.message.reply_text(
-        "🤖 Welcome to Telegram Anonymous Bot!\n\n"
-        "Choose an option:",
-        reply_markup=reply_markup
-    )
-
-
-async def main():
-    """Initialize and run the bot"""
-    from telegram import BotCommand
+    if not token:
+        logger.error("TELEGRAM_BOT_TOKEN environment variable not set")
+        return
     
-    # Replace with your bot token
-    BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-    
-    # Initialize application
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Initialize database and managers
-    db = DatabaseManager()
-    event_manager = EventManager(db)
-    vip_manager = VIPTierManager(db)
-    discount_manager = DiscountManager(db)
-    
-    # Store in bot data
-    application.bot_data['db'] = db
-    application.bot_data['event_manager'] = event_manager
-    application.bot_data['vip_manager'] = vip_manager
-    application.bot_data['discount_manager'] = discount_manager
-    
-    # Set bot commands
-    await application.bot.set_my_commands([
-        BotCommand("start", "Start the bot"),
-        BotCommand("admin", "Access admin panel"),
-        BotCommand("help", "Show help"),
-    ])
-    
-    # Conversation handlers
-    event_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(create_event_handler, pattern="event_create"),
-        ],
-        states={
-            ConversationState.WAITING_EVENT_NAME.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, event_name_handler)
-            ],
-            ConversationState.WAITING_EVENT_DATE.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, event_date_handler)
-            ],
-            ConversationState.WAITING_EVENT_DESCRIPTION.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, event_description_handler)
-            ],
-        },
-        fallbacks=[CallbackQueryHandler(button_callback)],
-    )
-    
-    vip_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(create_vip_handler, pattern="vip_create"),
-        ],
-        states={
-            ConversationState.WAITING_VIP_TIER_NAME.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vip_name_handler)
-            ],
-            ConversationState.WAITING_VIP_TIER_BENEFITS.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vip_benefits_handler)
-            ],
-            ConversationState.WAITING_VIP_TIER_PRICE.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, vip_price_handler)
-            ],
-        },
-        fallbacks=[CallbackQueryHandler(button_callback)],
-    )
-    
-    discount_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(create_discount_handler, pattern="discount_create"),
-        ],
-        states={
-            ConversationState.WAITING_DISCOUNT_NAME.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, discount_name_handler)
-            ],
-            ConversationState.WAITING_DISCOUNT_CODE.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, discount_code_handler)
-            ],
-            ConversationState.WAITING_DISCOUNT_PERCENTAGE.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, discount_percentage_handler)
-            ],
-            ConversationState.WAITING_DISCOUNT_EXPIRY.value: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, discount_expiry_handler)
-            ],
-        },
-        fallbacks=[CallbackQueryHandler(button_callback)],
-    )
-    
-    # Add handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(event_conv)
-    application.add_handler(vip_conv)
-    application.add_handler(discount_conv)
-    application.add_handler(CallbackQueryHandler(button_callback))
-    
-    # Start the bot
-    await application.run_polling()
+    bot = AnonymousBotManager(token)
+    bot.run()
 
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    main()
