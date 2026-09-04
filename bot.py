@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Security: All sensitive data from environment variables
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = "8213706320:AAHWSoajsa01o5Q4iagrkoResOeYsXF1qFI"
 HF_TOKEN = os.getenv("HF_TOKEN")
 OWNER_ID = os.getenv("OWNER_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@ChatNaAnnouncements")
